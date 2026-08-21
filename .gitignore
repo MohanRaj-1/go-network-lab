@@ -1,0 +1,15 @@
+# Build artifacts
+*.exe
+*.out
+*.test
+
+# Go workspace
+go.work
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
