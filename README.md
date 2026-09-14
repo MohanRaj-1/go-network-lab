@@ -31,7 +31,8 @@ A hands-on Go networking laboratory exploring networking fundamentals through pr
 tcp/
 ├── echo/       # Basic TCP client/server experiment
 ├── framing/    # Length-prefixed message framing
-└── protocol/   # Application protocol over framed TCP
+├── protocol/   # Application protocol over framed TCP
+└── http/       # HTTP/1.1 server over raw TCP
 
 protocol/       # Shared application protocol package
 
@@ -68,9 +69,25 @@ See [`docs/learnings/01-tcp-and-framing.md`](docs/learnings/01-tcp-and-framing.m
 
 See [`docs/learnings/02-application-protocol.md`](docs/learnings/02-application-protocol.md).
 
+### Phase 3 — HTTP from Raw TCP
+
+Status: Complete
+
+Implemented:
+
+- HTTP/1.1 request parsing and request line validation
+- Header parsing, repeated headers, validation, and limits
+- Host validation
+- Content-Length framing and chunked transfer encoding
+- Persistent connections and HTTP pipelining
+- Fragmented TCP reads and concurrent connections
+- HTTP responses
+
+See [`docs/learnings/03-http-from-raw-tcp.md`](docs/learnings/03-http-from-raw-tcp.md).
+
 ### Upcoming
 
-The lab will continue with HTTP, HTTPS/TLS, DNS, UDP, HTTP/2, WebSockets, gRPC, service-to-service networking, and networking under load.
+The lab will continue with HTTPS/TLS, DNS, UDP, HTTP/2, WebSockets, gRPC, service-to-service networking, and networking under load.
 
 ## Project Status
 
