@@ -13,3 +13,10 @@ go.work
 # OS
 .DS_Store
 Thumbs.db
+
+# TLS private keys
+tcp/tls/basic/certs/*.key
+
+# TLS debugging secrets
+tls-keys.log
+*.keys.log
