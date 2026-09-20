@@ -1,4 +1,4 @@
-package main
+package rawhttp
 
 import (
 	"bufio"
@@ -47,7 +47,7 @@ func TestConcurrentPersistentConnections(t *testing.T) {
 			if err != nil {
 				return
 			}
-			go handleConnection(conn)
+			go HandleConnection(conn)
 		}
 	}()
 	dial := func() net.Conn {
@@ -129,7 +129,7 @@ func TestHTTPStatusResponses(t *testing.T) {
 			client, server := net.Pipe()
 			defer client.Close()
 			client.SetDeadline(time.Now().Add(5 * time.Second))
-			go handleConnection(server)
+			go HandleConnection(server)
 			if _, err := io.WriteString(client, tc.raw); err != nil {
 				t.Fatal(err)
 			}
