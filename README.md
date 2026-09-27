@@ -126,6 +126,12 @@ See [`docs/learnings/06-dns-concepts-and-wire-format.md`](docs/learnings/06-dns-
 
 Future experiments include HTTP/2, WebSockets, gRPC, service-to-service networking, and networking under load. TLS/HTTPS and DNS over UDP/TCP are documented in the completed experiments above.
 
+## Releases
+
+- `v0.1.0` — Completed TCP, application protocol, raw HTTP, TLS/HTTPS, and DNS experiments.
+
 ## Project Status
 
 🚧 In Development
+
+Current milestone: `v0.1.0`
