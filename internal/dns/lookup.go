@@ -12,12 +12,9 @@ import (
 
 const lookupTimeout = 3 * time.Second
 
-// ErrTCPFallbackRequired indicates that a validated UDP response was truncated.
-var ErrTCPFallbackRequired = errors.New("DNS response truncated: TCP fallback required")
-
 // LookupA queries server (host:port) over UDP for matching A/IN answers.
 // The overall timeout is three seconds or the context deadline, whichever is earlier.
-// It does not retry or perform TCP fallback yet.
+// A validated truncated UDP response triggers one TCP exchange under the same deadline.
 func LookupA(ctx context.Context, server string, name string) ([]net.IP, error) {
 	ctx, cancel := context.WithTimeout(ctx, lookupTimeout)
 	defer cancel()
@@ -74,7 +71,22 @@ func LookupA(ctx context.Context, server string, name string) ([]net.IP, error) 
 			continue
 		}
 		if isTruncated(message.Header.Flags) {
-			return nil, ErrTCPFallbackRequired
+			// No more UDP reads; continue the same lookup over TCP.
+			conn.Close()
+			response, err := exchangeTCP(ctx, server, query)
+			if err != nil {
+				return nil, fmt.Errorf("TCP fallback: %w", err)
+			}
+			message, err = DecodeMessage(response)
+			if err != nil {
+				return nil, fmt.Errorf("decode DNS TCP response: %w", err)
+			}
+			if err := ValidateResponse(message, queryID, question); err != nil {
+				return nil, fmt.Errorf("validate DNS TCP response: %w", err)
+			}
+			if isTruncated(message.Header.Flags) {
+				return nil, fmt.Errorf("DNS TCP response is still truncated")
+			}
 		}
 		if err := validateRCode(message); err != nil {
 			return nil, err

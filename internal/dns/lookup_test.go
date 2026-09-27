@@ -84,17 +84,15 @@ func TestLookupAIgnoresUnrelatedPackets(t *testing.T) {
 
 func TestLookupAResponseErrors(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		reply    func([]byte) []byte
-		text     string
-		code     uint16
-		fallback bool
+		name  string
+		reply func([]byte) []byte
+		text  string
+		code  uint16
 	}{
-		{"malformed matching ID", func(q []byte) []byte { return q[:2] }, "decode DNS response", 0, false},
-		{"NXDOMAIN", func(q []byte) []byte { return lookupTestResponse(q, FlagQR|3) }, "", 3, false},
-		{"SERVFAIL", func(q []byte) []byte { return lookupTestResponse(q, FlagQR|2) }, "", 2, false},
-		{"truncated before RCODE", func(q []byte) []byte { return lookupTestResponse(q, FlagQR|FlagTC|3) }, "", 0, true},
-		{"malformed A", func(q []byte) []byte { return lookupTestResponse(q, FlagQR, []byte{1, 2}) }, "invalid A record", 0, false},
+		{"malformed matching ID", func(q []byte) []byte { return q[:2] }, "decode DNS response", 0},
+		{"NXDOMAIN", func(q []byte) []byte { return lookupTestResponse(q, FlagQR|3) }, "", 3},
+		{"SERVFAIL", func(q []byte) []byte { return lookupTestResponse(q, FlagQR|2) }, "", 2},
+		{"malformed A", func(q []byte) []byte { return lookupTestResponse(q, FlagQR, []byte{1, 2}) }, "invalid A record", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := lookupTestServer(t, func(q []byte) [][]byte { return [][]byte{tc.reply(q)} })
@@ -103,9 +101,6 @@ func TestLookupAResponseErrors(t *testing.T) {
 				t.Fatalf("expected no result and error, got (%v, %v)", got, err)
 			}
 			if tc.text != "" && !strings.Contains(err.Error(), tc.text) {
-				t.Fatal(err)
-			}
-			if tc.fallback && !errors.Is(err, ErrTCPFallbackRequired) {
 				t.Fatal(err)
 			}
 			if tc.code != 0 {

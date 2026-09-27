@@ -32,9 +32,16 @@ tcp/
 ├── echo/       # Basic TCP client/server experiment
 ├── framing/    # Length-prefixed message framing
 ├── protocol/   # Application protocol over framed TCP
-└── http/       # HTTP/1.1 server over raw TCP
+├── http/       # HTTP/1.1 server over raw TCP
+├── tls/        # TLS client/server experiments
+└── https/      # HTTPS using the raw HTTP implementation
 
 protocol/       # Shared application protocol package
+
+internal/
+├── rawhttp/    # HTTP parsing and connection handling
+└── dns/        # DNS encoding, decoding, validation, UDP and TCP lookup
+    └── client/ # Runnable IPv4 lookup example
 
 docs/
 └── learnings/  # Notes, experiments, and observations
@@ -85,9 +92,39 @@ Implemented:
 
 See [`docs/learnings/03-http-from-raw-tcp.md`](docs/learnings/03-http-from-raw-tcp.md).
 
+### Phase 4 — TLS and HTTPS
+
+Status: Complete
+
+Implemented:
+
+- TLS client/server experiments and certificate verification
+- HTTPS integration with the existing raw HTTP implementation
+- Separation of TLS transport protection from HTTP parsing
+
+See [TLS Concepts and Experiments](docs/learnings/04-tls-concepts-and-experiments.md) and [HTTPS and TLS Integration](docs/learnings/05-https-and-tls.md).
+
+### Phase 5 — DNS Client over UDP and TCP
+
+Status: Complete
+
+Implemented:
+
+- DNS A/IN query encoding
+- Header, question, and resource-record decoding
+- Domain-name encoding and compression pointers
+- Transaction ID and response validation
+- DNS response-code errors and IPv4 address extraction
+- UDP lookups and TCP fallback
+- DNS-over-TCP length-prefixed framing
+- Shared lookup deadline and context cancellation
+- Unit tests and local UDP/TCP integration tests
+
+See [`docs/learnings/06-dns-concepts-and-wire-format.md`](docs/learnings/06-dns-concepts-and-wire-format.md) and [`docs/learnings/07-dns-client-implementation.md`](docs/learnings/07-dns-client-implementation.md).
+
 ### Upcoming
 
-The lab will continue with HTTPS/TLS, DNS, UDP, HTTP/2, WebSockets, gRPC, service-to-service networking, and networking under load.
+Future experiments include HTTP/2, WebSockets, gRPC, service-to-service networking, and networking under load. TLS/HTTPS and DNS over UDP/TCP are documented in the completed experiments above.
 
 ## Project Status
 
