@@ -36,6 +36,10 @@ tcp/
 ├── tls/        # TLS client/server experiments
 └── https/      # HTTPS using the raw HTTP implementation
 
+udp/
+├── echo/       # UDP echo client/server experiment
+└── protocol/   # Small application protocol over UDP
+
 protocol/       # Shared application protocol package
 
 internal/
@@ -121,6 +125,29 @@ Implemented:
 - Unit tests and local UDP/TCP integration tests
 
 See [`docs/learnings/06-dns-concepts-and-wire-format.md`](docs/learnings/06-dns-concepts-and-wire-format.md) and [`docs/learnings/07-dns-client-implementation.md`](docs/learnings/07-dns-client-implementation.md).
+
+### Phase 6 — UDP Fundamentals
+
+Status: Complete
+
+Implemented and explored:
+
+- UDP datagrams and the UDP mental model
+- UDP wire format and the 8-byte header
+- TCP byte streams vs UDP datagrams
+- `net.ListenUDP`, `net.DialUDP`, `ReadFromUDP`, and `WriteToUDP`
+- Datagram boundaries and Windows receive-buffer behavior
+- Multiple clients communicating with one UDP socket
+- UDP loss, reordering, and duplication characteristics
+- JSON request/response protocol with `TIME` and unknown-operation errors
+- Application-level request IDs and response correlation
+- Read deadlines and one retry using the same request ID
+- Duplicate detection and cached responses
+- Semantic protocol validation
+- Focused tests for serialization, validation, and duplicate handling
+- Cache separation by client address and request ID
+
+See [`docs/learnings/08-udp-fundamentals.md`](docs/learnings/08-udp-fundamentals.md).
 
 ### Upcoming
 
