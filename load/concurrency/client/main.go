@@ -19,7 +19,7 @@ type ClientResult struct {
 }
 
 func main() {
-	const n = 500
+	const n = 20
 	const duration = 10 * time.Second
 	start := make(chan struct{})
 	results := make(chan ClientResult, n)
@@ -105,16 +105,16 @@ func main() {
 	fmt.Printf("Throughput: %.1f req/s\n", float64(total.Completed)/duration.Seconds())
 	fmt.Println("\nLatency:")
 	if len(total.Latencies) == 0 {
-		fmt.Println("  min: N/A\n  avg: N/A\n  p95: N/A")
+		fmt.Println("  min: N/A\n  avg: N/A\n  p50: N/A\n  p95: N/A")
 		return
 	}
-	min, avg, p95 := latencyStats(total.Latencies)
-	fmt.Printf("  min: %s\n  avg: %s\n  p95: %s\n", min, avg, p95)
+	min, avg, p50, p95 := latencyStats(total.Latencies)
+	fmt.Printf("  min: %s\n  avg: %s\n  p50: %s\n  p95: %s\n", min, avg, p50, p95)
 }
 
-func latencyStats(latencies []time.Duration) (min, avg, p95 time.Duration) {
+func latencyStats(latencies []time.Duration) (min, avg, p50, p95 time.Duration) {
 	if len(latencies) == 0 {
-		return 0, 0, 0
+		return 0, 0, 0, 0
 	}
 	samples := append([]time.Duration(nil), latencies...)
 	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
@@ -122,7 +122,14 @@ func latencyStats(latencies []time.Duration) (min, avg, p95 time.Duration) {
 	for _, latency := range samples {
 		sum += latency
 	}
+	// Median: the middle sample, or the midpoint of the two middle samples.
+	middle := len(samples) / 2
+	p50 = samples[middle]
+	if len(samples)%2 == 0 {
+		lower := samples[middle-1]
+		p50 = lower + (p50-lower)/2
+	}
 	// Nearest-rank percentile: ceil(0.95 * sample count), then zero-based index.
 	index := (95*len(samples)+99)/100 - 1
-	return samples[0], sum / time.Duration(len(samples)), samples[index]
+	return samples[0], sum / time.Duration(len(samples)), p50, samples[index]
 }

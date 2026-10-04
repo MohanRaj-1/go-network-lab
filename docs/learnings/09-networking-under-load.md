@@ -208,3 +208,209 @@ The machine approached saturation around four to six clients. Beyond that
 region, throughput approached a ceiling while average and p95 latency continued
 rising. The experiment gave me evidence for the relationship between concurrency,
 resource capacity, and waiting time.
+
+---
+
+## Day 2 — Throughput and Latency
+
+### Goal
+
+Understand how throughput and request latency behave together as concurrency
+increases, especially after available CPU capacity becomes saturated.
+
+I also wanted to test whether the measurements could predict what would happen
+when concurrency increased beyond the ten-client experiment.
+
+### Experiment Setup
+
+I kept the Day 1 server, 10,000-hash workload, persistent connections, loopback
+networking, and shared 10-second window unchanged. The client continued to allow
+only one request in flight per connection.
+
+The client improvement was adding p50 latency. I collected a fresh set of runs
+at 1, 2, 4, 6, 8, and 10 clients, then tested a prediction with 20 clients.
+
+### Measurements
+
+Throughput is completed requests divided by the measurement duration. Latency
+is the elapsed time from immediately before sending a request until the complete
+response arrives. It is client-observed response time, not isolated server
+computation time.
+
+The client reported completed requests, errors, unfinished requests, throughput,
+and successful-request latency statistics:
+
+- **Average (mean):** the sum of latency samples divided by their count.
+- **p50 (median):** the middle sorted sample, or the average of the two middle
+  samples when the count is even.
+- **p95:** the nearest-rank 95th percentile, describing the slower end of
+  successful requests.
+
+The mean and median are different statistics. A small number of slow requests
+can pull the mean upward while changing the median much less. Comparing p50,
+average, and p95 helps describe behavior that one latency number would hide.
+
+The implementation also reported minimum latency; the unresolved `0s` readings
+remain a measurement limitation rather than a result used for interpretation.
+CPU readings were manually observed peaks, not averages over the full window.
+
+### Results
+
+Each row is a fresh 10-second run, separate from the Day 1 measurements.
+
+| Clients | Throughput (req/s) | p50 (ms) | Average (ms) | p95 (ms) | Observed CPU peak |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 1,328.6 | 0.7277 | 0.752554 | 1.0899 | ~30% |
+| 2 | 2,094.7 | 0.7427 | 0.954682 | 1.5095 | ~49% |
+| 4 | 3,160.2 | 1.22855 | 1.265396 | 1.9259 | ~89% |
+| 6 | 3,432.3 | 1.6398 | 1.747818 | 2.8102 | 100% |
+| 8 | 3,570.9 | 2.0663 | 2.239841 | 3.9671 | 100% |
+| 10 | 3,607.8 | 2.63565 | 2.771283 | 4.8215 | 100% |
+
+All six runs reported zero errors and one unfinished request per client at the
+cutoff. CPU readings in this series are retained as reported; process-versus-
+whole-machine attribution was not separately confirmed for each reading.
+
+### Observations
+
+From one to four clients, throughput rose from 1,328.6 to 3,160.2 requests/sec.
+After around four clients, throughput continued to increase but with diminishing
+returns. From four to ten clients, the gain was about 14%, while average latency
+rose from 1.265 to 2.771 ms, approximately 2.2 times as high.
+
+p50, average, and p95 increased across the client counts. At ten clients, p50
+was 2.636 ms and the average was 2.771 ms, but p95 was 4.822 ms. The typical
+request and slower requests therefore experienced different response times.
+The p95-minus-p50 gap widened from about 0.362 ms at one client to 2.186 ms
+at ten clients.
+
+Similar throughput did not imply similar client experience. Additional
+concurrency near saturation increased latency much more than useful throughput.
+
+### Closed-Loop Relationship
+
+This client generates closed-loop load:
+
+```text
+send request → wait for response → record latency → send next request
+```
+
+Concurrency is configured directly; requests/sec emerges from how quickly
+clients complete that cycle. A slower response also delays the next request.
+
+I multiplied measured throughput by average latency, converting milliseconds
+to seconds first:
+
+| Clients | Throughput × average latency |
+|---:|---:|
+| 1 | 0.9998 |
+| 2 | 1.9998 |
+| 4 | 3.9989 |
+| 6 | 5.9980 |
+| 8 | 7.9982 |
+| 10 | 9.9982 |
+
+The products closely matched configured concurrency. This is consistent with
+Little's Law:
+
+```text
+L ≈ X × R
+
+L = average number of requests in flight
+X = throughput in requests/sec
+R = mean request latency in seconds
+```
+
+For this continuously active closed-loop workload, with one outstanding request
+per client and very little time between requests, `L` is approximately the number
+of clients, `N`. That gives the useful approximation `N ≈ X × R`.
+
+This does not mean throughput multiplied by any latency statistic always equals
+configured concurrency. The relationship uses the mean, not p50 or p95, and
+consistent measurement boundaries. Client think time, failures, and changes in
+active client count would affect the interpretation. Finite-window startup and
+unfinished requests also keep these measured products from being exact identities.
+
+### Prediction at 20 Clients
+
+The ten-client run measured 3,607.8 requests/sec and 2.771283 ms average latency.
+If doubling concurrency did not substantially change throughput, the closed-loop
+relationship suggested that average latency would approximately double.
+
+Using a rounded capacity estimate of 3,600 requests/sec:
+
+```text
+Expected average latency ≈ N / X
+                         ≈ 20 / 3600 seconds
+                         ≈ 5.56 ms
+```
+
+This was a prediction under an approximately constant-throughput assumption,
+not a measurement or a guarantee.
+
+### 20-Client Result
+
+The subsequent run completed 34,532 requests in ten seconds:
+
+| Metric | 10 clients | 20 clients |
+|---|---:|---:|
+| Completed requests | 36,078 | 34,532 |
+| Throughput (req/s) | 3,607.8 | 3,453.2 |
+| Average latency (ms) | 2.771283 | 5.788762 |
+| p50 latency (ms) | 2.63565 | 5.3968 |
+| p95 latency (ms) | 4.8215 | 10.0337 |
+| Errors | 0 | 0 |
+| Unfinished | 10 | 20 |
+
+Doubling concurrency did not double throughput. Throughput was about 4.3% lower
+in this run, while average latency increased approximately 2.09 times and p95
+approximately 2.08 times. The result supported the predicted latency increase,
+although throughput was not exactly constant.
+
+Using the measured twenty-client throughput and mean latency:
+
+```text
+3453.2 requests/sec × 0.005788762 seconds ≈ 19.9898
+```
+
+This closely matches the 20 configured clients, consistent with the closed-loop
+relationship observed in the earlier runs. No CPU reading was recorded for the
+twenty-client run.
+
+### What I Learned
+
+I learned to evaluate throughput alongside typical and tail response times.
+A throughput increase can come with a much larger latency cost, and additional
+concurrency beyond capacity can increase response time without improving
+completed work per second.
+
+The closed-loop client also made the connection between concurrency, throughput,
+and average latency concrete. I used that relationship to make a prediction,
+then compared it with a new measurement instead of accepting the calculation
+as proof.
+
+### Limitations
+
+- Each Day 2 concurrency level has one run. The small throughput decrease at
+  twenty clients does not establish a general throughput regression.
+- CPU values are observed peaks, not synchronized averages, and their attribution
+  was not independently confirmed for this series. No twenty-client CPU value
+  was collected.
+- The client and server share one machine and use synthetic CPU work over
+  loopback. These results do not establish remote-service capacity.
+- There is no independently controlled arrival rate or explicit warm-up.
+  Closed-loop clients reduce their request rate when responses slow down.
+- Only successful responses contribute latency samples. Cutoff requests and
+  other measurement limitations from Day 1 still apply.
+- The throughput–mean-latency product is consistent with Little's Law under
+  this setup. It does not independently locate a queue, measure CPU queue time,
+  or establish that every configured client remains active in other experiments.
+
+### Conclusion
+
+Throughput increased substantially as concurrency increased from one to four
+clients, then showed diminishing returns while median, average, and p95 latency
+continued rising. The twenty-client
+test supported the prediction that extra concurrency near capacity would mainly
+increase response time. For this closed-loop workload, throughput multiplied by
+mean latency closely matched the number of active clients.
