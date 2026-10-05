@@ -648,3 +648,167 @@ queue either blocked producers or returned BUSY, depending on the admission
 policy. Adding a 50 ms client retry delay sharply reduced rejected attempts
 without increasing processing capacity. Backpressure determines how overload is
 communicated and handled; it does not remove the underlying capacity limit.
+
+---
+
+## Day 4 — Resource Limits
+
+### Goal
+
+Observe how persistent TCP connections consume resources independently of
+request processing. I wanted to measure the relationship between held
+connections, goroutines, and Go runtime memory without repeating the CPU-bound
+workload from Days 1–2.
+
+### Experiment Setup
+
+I created a separate [server](../../load/resources/connections/server/main.go)
+and [client](../../load/resources/connections/client/main.go) under
+`load/resources/connections/`.
+
+The server listens on `:9300`, tracks active connections, and starts one handler
+goroutine per connection. Each handler waits in `conn.Read` using a one-byte
+buffer. There is no request computation or response workload.
+
+The client opens the requested connections sequentially, then holds them idle
+for 30 seconds before closing them. Sequential dialing isolates resource
+accumulation from a simultaneous connection-establishment burst. The client
+reports requested, successful, failed, and unattempted connection counts.
+
+Both programs run on the same Windows machine over loopback. For example:
+
+```sh
+go run ./load/resources/connections/server
+go run ./load/resources/connections/client -clients 10
+```
+
+### Measurements
+
+The server reports resources once per second:
+
+| Metric | Meaning |
+|---|---|
+| `connections` | Application-tracked active connections |
+| `goroutines` | Total Go goroutines reported by `runtime.NumGoroutine()` |
+| `heap_alloc_bytes` | Bytes currently allocated to Go heap objects |
+| `stack_inuse_bytes` | Bytes in stack spans currently in use by the Go runtime |
+| `runtime_sys_bytes` | Total bytes of memory obtained from the OS by the Go runtime |
+
+These memory categories are not interchangeable. In particular, runtime Sys
+includes multiple runtime memory categories; it is not an additional quantity
+to sum with heap and stack. None of these readings measures the complete process
+working set or OS socket-buffer memory.
+
+I recorded representative readings while connections were held and observed
+what happened after they closed. The baseline was approximately zero connections,
+two goroutines, 83 KB of heap allocation, 128 KiB of stack memory, and 6.1 MB
+of runtime Sys.
+
+### Results
+
+The initial 10, 50, 100, 250, and 500-connection runs all succeeded with zero
+failures and no unattempted connections. At 500 connections, the server reported
+502 goroutines and approximately 1.41 MB heap, 4.38 MB stack, and 10.9 MB runtime
+Sys. I then increased the count progressively:
+
+| Requested | Successful | Failed | Unattempted | Active connections | Goroutines | Heap (MB) | Stack in use (MB) | Runtime Sys (MB) |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1,000 | 1,000 | 0 | 0 | 1,000 | 1,002 | ~1.67 | ~8.32 | ~15.44 |
+| 2,000 | 2,000 | 0 | 0 | 2,000 | 2,002 | ~2.83 | ~16.52 | ~29.08 |
+| 5,000 | 5,000 | 0 | 0 | 5,000 | 5,002 | ~7.22 | ~41.09 | ~55.79 |
+| 10,000 | 10,000 | 0 | 0 | 10,000 | 10,002 | ~14.26 | ~82.05 | ~108.81 |
+
+Values are approximate reported readings; MB denotes decimal megabytes.
+For the 10,000-connection run, one held-state snapshot was:
+
+```text
+connections=10000 goroutines=10002
+heap_alloc_bytes=14255600
+stack_inuse_bytes=82051072
+runtime_sys_bytes=108807040
+```
+
+All 10,000 requested connections opened successfully. The experiment stopped at
+this level without a visible connection or OS limit; it did not seek a maximum.
+
+### Observations
+
+Goroutine count followed active connections closely: 1,000 connections produced
+1,002 goroutines, and 10,000 produced 10,002. This fits this server's design of
+one handler per connection plus the main and reporting goroutines. It is a
+property of this implementation, not a universal relationship between clients,
+connections, and goroutines.
+
+Idle connections still consumed memory. Reported stack memory increased from
+about 8.32 MB at 1,000 connections to 82.05 MB at 10,000. Heap allocation and
+runtime Sys also increased substantially, even though handlers were waiting
+for network input rather than repeatedly performing CPU work.
+
+Not every metric scaled proportionally. For example, the baseline series reported
+approximately the same runtime Sys at 250 and 500 connections. Runtime memory
+allocation and reuse can make growth occur in steps rather than match each
+connection increase exactly.
+
+### After Disconnection
+
+After the 10,000 clients disconnected, application counts returned to baseline:
+
+```text
+connections=0 goroutines=2
+stack_inuse_bytes=82051072
+runtime_sys_bytes=108807040
+```
+
+The sampled runtime memory values remained high despite handler goroutines
+finishing. This demonstrates that connection cleanup and an immediate reduction
+in runtime memory readings are different events.
+
+These snapshots do not provide enough evidence to diagnose a memory leak.
+Garbage collection, stack-span
+reuse, and returning memory to the OS were not investigated separately. The
+reporting loop also performs ongoing work and may allocate, so small heap
+increases after disconnection cannot be attributed to leaked connection objects
+from these measurements alone.
+
+### What I Learned
+
+I learned that an idle connection is still a resource commitment. In this design,
+keeping a connection open keeps a handler goroutine alive, and those handlers
+contribute to the runtime's memory footprint even while waiting on reads.
+
+I also learned to distinguish application lifecycle counters from runtime memory
+measurements. Connections and goroutines returning to baseline confirms their
+tracked lifecycle ended; it does not imply every associated memory category
+immediately returns to its original value.
+
+The experiment demonstrated increasing resource consumption without needing to
+force a failure. Successfully holding 10,000 idle connections answers a narrow
+question about this environment, not how many active clients a production service
+could safely support.
+
+### Limitations
+
+- Connections were idle. Active requests, TLS, per-client buffers, and application
+  state could produce very different CPU and memory costs.
+- Connections were opened sequentially. This does not measure burst acceptance
+  or connection-establishment throughput.
+- Client and server share one machine and use loopback. Remote-network behavior
+  and distributed resource usage were not tested.
+- Go runtime memory excludes a complete accounting of process working set and
+  socket/kernel memory. File-descriptor or socket-handle limits and socket-buffer
+  usage were not directly measured.
+- The reported memory readings are representative samples, not repeated-run
+  averages or isolated per-connection allocation measurements. Runtime state and
+  reporting overhead can affect them.
+- Garbage collection and memory release were not controlled or profiled. High
+  post-disconnection memory readings alone do not diagnose a leak.
+- No visible limit was reached at 10,000 connections. This establishes neither
+  the maximum supported count nor a safe production capacity.
+
+### Conclusion
+
+Increasing persistent idle connections increased handler goroutines and Go
+runtime memory usage. This environment held 10,000 connections without reported
+connection failures. After disconnection, active connections and goroutines
+returned to baseline while sampled runtime memory remained high. Connection
+capacity and resource cost must be measured separately from request throughput.
