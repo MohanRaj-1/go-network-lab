@@ -414,3 +414,237 @@ continued rising. The twenty-client
 test supported the prediction that extra concurrency near capacity would mainly
 increase response time. For this closed-loop workload, throughput multiplied by
 mean latency closely matched the number of active clients.
+
+---
+
+## Day 3 — Backpressure and Queuing
+
+### Goal
+
+Understand where excess work waits when processing capacity is limited, what
+happens when a bounded queue fills, and how blocking, rejection, and client retry
+behavior change the response to overload.
+
+### Experiment Setup
+
+I created a separate [queue server](../../load/backpressure/queue/server/main.go)
+and [client](../../load/backpressure/queue/client/main.go), preserving the earlier
+CPU-bound experiment.
+
+The server listens on `:9200`. Connection handlers submit jobs to a buffered Go
+channel with capacity four. One worker processes jobs using an artificial
+`time.Sleep(100 * time.Millisecond)` before signaling completion. The handler
+then sends `DONE\n`.
+
+This is deliberately different from Days 1–2: the sleep makes queue behavior
+visible, rather than creating CPU load. One worker processing one job every
+100 ms has a nominal capacity of approximately 10 requests/sec. Scheduling and
+I/O overhead can reduce the measured rate.
+
+Clients reuse persistent connections, keep one request in flight per client,
+start together, and run for ten seconds. The server reports:
+
+| Field | Meaning |
+|---|---|
+| `accepted` | Cumulative valid WORK requests read, including requests later rejected |
+| `queued` | Cumulative successful channel submissions, not current queue length |
+| `completed` | Cumulative jobs whose worker processing finished, not confirmed client responses |
+| `rejected` | Cumulative requests refused because queue capacity was unavailable |
+| `queue` | Instantaneous buffered jobs divided by channel capacity |
+| `submitting` | Handlers currently attempting a blocking channel submission |
+
+Atomic counters allow concurrent updates. Values are read separately, so a log
+line is not a transactionally consistent snapshot. Server counters accumulate
+across client runs, while client results cover each individual window.
+
+### Blocking-Policy Experiment
+
+The first policy submits directly:
+
+```go
+jobs <- job
+```
+
+When the channel is full, the connection handler blocks until the worker removes
+an item. After submission, the handler waits for its own job to finish before
+responding to the client.
+
+| Clients | Completed | Throughput (req/s) | Avg latency (ms) | p50 (ms) | p95 (ms) |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 89 | 8.9 | 112.104 | 112.195 | 112.986 |
+| 2 | 89 | 8.9 | 222.880 | 224.103 | 225.666 |
+| 4 | 89 | 8.9 | 441.680 | 448.884 | 451.782 |
+| 6 | 88 | 8.8 | 655.013 | 674.045 | 675.749 |
+| 8 | 89 | 8.9 | 862.986 | 898.422 | 899.712 |
+| 10 | 89 | 8.9 | 1,064.035 | 1,121.230 | 1,124.344 |
+
+Each run recorded zero errors and one unfinished request per client at cutoff.
+Throughput stayed near nine requests/sec while average latency rose from about
+112 ms to 1.064 seconds. More clients did not make the single worker faster.
+
+The queue was observed full at six clients:
+
+```text
+queue=4/4 submitting=1
+```
+
+At ten clients, the logs also showed:
+
+```text
+queue=4/4 submitting=5
+```
+
+These observations distinguish two waiting locations: four jobs buffered in the
+channel, and additional connection goroutines blocked outside it. With ten active
+clients, one processing job, four queued jobs, and five submitting handlers account
+for the outstanding work in that snapshot.
+
+The channel bounds buffered jobs, but does not bound the total number of blocked
+producers. Blocking slows each caller's next request, yet connections and waiting
+goroutines can still consume resources.
+
+### Rejection and Retry Behavior
+
+I next changed the queue-full policy to a non-blocking channel submission:
+
+```go
+select {
+case jobs <- job:
+    // Wait for processing, then return DONE.
+default:
+    // Return BUSY without waiting for queue capacity.
+}
+```
+
+If space is available, processing follows the same path. Otherwise, the server
+returns `BUSY\n` on the existing connection. This makes overload explicit and
+sheds the rejected attempt before worker processing. The caller decides whether
+and when to try again.
+
+This separates server-side admission policy from client retry behavior. The
+non-blocking send avoids waiting for queue capacity; response writing and network
+scheduling can still take time. Rejection logs showed `submitting=0` even with
+`queue=4/4`.
+
+#### Rejection Without Retry Delay
+
+With ten clients, the first rejection experiment immediately retried after
+receiving `BUSY`. Three repeated runs produced:
+
+| Run | Completed | Rejected | Throughput (req/s) | Avg successful latency (ms) | Avg rejection latency (µs) |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 99 | 642,773 | 9.9 | 491.382 | 77.657 |
+| 2 | 99 | 634,968 | 9.9 | 491.475 | 78.617 |
+| 3 | 99 | 624,321 | 9.9 | 491.710 | 79.960 |
+
+All three runs reported zero errors and ten unfinished requests. Successful
+throughput stayed near the worker's nominal limit, but callers generated more
+than 600,000 rejected attempts per run. Fast rejection alone did not prevent
+excessive retry pressure.
+
+Successful-request latency measures only the attempt that receives DONE. It
+excludes earlier rejected attempts, so approximately 491 ms is not the total
+client time spent retrying until a successful completion.
+
+#### Rejection With a 50 ms Retry Delay
+
+I then configured the client to wait 50 ms after BUSY before sending its next
+request. This is a fixed retry delay, not an exponential retry strategy. The
+wait is capped by the remaining experiment duration and lies outside individual
+attempt latency measurements.
+
+With ten clients and the same worker, queue, and processing duration:
+
+| Run | Completed | Rejected | Throughput (req/s) | Avg successful latency (ms) | p50 (ms) | p95 (ms) | Avg rejection latency (ms) |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 87 | 755 | 8.7 | 555.488 | 560.808 | 663.121 | 1.310301 |
+| 2 | 89 | 785 | 8.9 | 547.444 | 560.179 | 561.477 | 0.024858 |
+| 3 | 90 | 780 | 9.0 | 542.687 | 557.888 | 563.737 | 1.088634 |
+
+All runs reported zero errors and five unfinished requests. A client waiting
+between attempts at cutoff has no outstanding request to count as unfinished.
+
+Rejected attempts fell from hundreds of thousands to 755–785 per run. Successful
+throughput remained near the worker's capacity; the delay changed retry pressure
+without creating more processing capacity. Successful latency still excludes
+previous BUSY attempts and retry delays.
+
+#### Reproducing the Experiments
+
+Start the server with the selected policy in one terminal, then run a client
+command in another:
+
+```sh
+# Blocking policy
+go run ./load/backpressure/queue/server -policy block
+go run ./load/backpressure/queue/client -clients 10
+
+# Stop the blocking server before starting the rejecting server.
+go run ./load/backpressure/queue/server -policy reject
+
+# Immediate retry
+go run ./load/backpressure/queue/client -clients 10
+
+# Fixed retry delay
+go run ./load/backpressure/queue/client -clients 10 -retry-delay 50ms
+```
+
+### Comparing the Policies
+
+| Policy | Server behavior when full | Client behavior | Main observed effect |
+|---|---|---|---|
+| Blocking | Wait for queue capacity | Wait for the response | Work waits inside and outside the queue; latency rises |
+| Rejection + immediate retry | Return BUSY | Send another request immediately | No blocked submitters, but very high retry pressure |
+| Rejection + fixed delay | Return BUSY | Wait 50 ms, then retry | Far fewer rejected attempts; worker capacity remains unchanged |
+
+A bounded queue provides limited waiting space. It does not solve a sustained
+capacity mismatch. Once full, the policy determines whether producers wait or
+attempts are rejected. Client behavior determines whether rejection reduces
+pressure or causes repeated overload attempts.
+
+### What I Learned
+
+I learned that waiting can exist even without an explicit queue, and a bounded
+channel makes only one part of that waiting visible. Blocking a channel sender
+moves excess work into waiting connection goroutines; bounding the channel alone
+does not bound all outstanding work.
+
+Rejection makes unavailable capacity visible to callers. Immediate retries can
+turn that signal into a retry storm, while a fixed delay greatly reduces the
+number of attempts. Server protection therefore depends on both admission policy
+and how callers react.
+
+Neither a queue nor a retry delay increases worker capacity. They change where
+and how callers wait, and whether an attempt is admitted or rejected.
+
+### Limitations
+
+- Artificial sleep creates a controlled service delay, not a realistic CPU,
+  database, or downstream-service workload. The nominal 10 requests/sec is not
+  an exact measured rate.
+- The client is closed-loop. Rejected attempts change its achieved request rate;
+  the experiments do not hold an independent arrival rate constant.
+- Client and server share one machine. Policy throughput differences can reflect
+  scheduling, timing, and retry activity rather than additional worker capacity.
+- Successful latency excludes rejected attempts and retry delays. Total time to
+  eventual success and per-client fairness were not measured.
+- Queue length and submitting counts are instantaneous samples, not complete
+  histories. A zero sampled submitting count in rejection mode follows the
+  non-blocking admission path, not a claim that all network operations are free
+  of blocking.
+- Server processing continues for queued jobs after clients reach their cutoff.
+  Server completed counts can exceed client completions, and an undrained queue
+  could affect a subsequent run.
+- Blocking bounds buffered jobs without limiting connections or blocked
+  producers. Rejection likewise does not bound connections or all network work.
+- This fixed-delay experiment does not implement exponential retry behavior,
+  jitter, retry budgets, cancellation of queued jobs, or production overload
+  protection. Repeated admission attempts are not guaranteed fair access.
+
+### Conclusion
+
+With one slow worker, more clients primarily increased waiting. A full bounded
+queue either blocked producers or returned BUSY, depending on the admission
+policy. Adding a 50 ms client retry delay sharply reduced rejected attempts
+without increasing processing capacity. Backpressure determines how overload is
+communicated and handled; it does not remove the underlying capacity limit.
