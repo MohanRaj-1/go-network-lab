@@ -812,3 +812,204 @@ runtime memory usage. This environment held 10,000 connections without reported
 connection failures. After disconnection, active connections and goroutines
 returned to baseline while sampled runtime memory remained high. Connection
 capacity and resource cost must be measured separately from request throughput.
+
+---
+
+## Day 5 — Protecting the Server
+
+### Goal
+
+Observe how a server can protect finite connection resources by limiting
+admission, reclaiming idle connections, and making released capacity available
+to subsequent clients. Day 4 showed that idle connections consume resources;
+in this experiment, I wanted to establish an explicit budget for those commitments.
+
+A limit does not create more capacity. It controls how much capacity the
+application is willing to commit.
+
+### Experiment Setup
+
+I created a separate [server](../../load/protection/connections/server/main.go)
+and [client](../../load/protection/connections/client/main.go) under
+`load/protection/connections/`, leaving the Day 4 resource experiment separate.
+Both programs run on the same Windows machine over loopback.
+
+The server listens on `:9400`. After `listener.Accept()`, it attempts a
+nonblocking reservation in a buffered channel sized by `-max-connections`.
+If a slot is available, it starts one handler goroutine and sends `OK\n`.
+If full, it attempts to send `BUSY\n` and closes the connection without
+starting a handler. Handler cleanup closes the connection, decrements the
+active count, and releases the channel slot.
+
+The client opens connections sequentially and reads the admission response.
+It holds admitted connections without sending requests, then closes its local
+connections after `-duration`. The hold starts after that wave's attempts
+finish. `-waves` defaults to one; each wave owns its connections and closes
+them before the next wave begins. There is no request-processing workload.
+
+The server reports once per second:
+
+| Metric | Meaning |
+|---|---|
+| `active` | Current application-admitted connections |
+| `admitted` | Cumulative application admission decisions since server startup |
+| `rejected` | Cumulative application rejection decisions since server startup |
+| `goroutines` | Total Go goroutines reported by `runtime.NumGoroutine()` |
+
+I use `admitted` rather than `accepted` because TCP `Accept()` has already
+happened for both admission outcomes. Cumulative counters describe history;
+`active` describes current resource commitments.
+
+Client `successful` counts received `OK` responses, `rejected` counts received
+`BUSY` responses, `failed` covers dial or admission-response errors, and
+`unattempted` counts attempts skipped after interruption. A successful TCP
+dial alone does not count as application admission.
+
+### Experiment A — Connection Admission Limit
+
+I first tested admission alone, before adding the idle deadline, with
+`-max-connections 100`. Each client run used `-duration 30s`, with a fresh
+server for each requested connection count.
+
+| Requested | Successful | Rejected | Failed | Unattempted | Held active | Held goroutines |
+|---:|---:|---:|---:|---:|---:|---:|
+| 10 | 10 | 0 | 0 | 0 | 10 | 12 |
+| 50 | 50 | 0 | 0 | 0 | 50 | 52 |
+| 100 | 100 | 0 | 0 | 0 | 100 | 102 |
+| 250 | 100 | 150 | 0 | 0 | 100 | 102 |
+| 500 | 100 | 400 | 0 | 0 | 100 | 102 |
+
+Increasing demand beyond 100 did not increase the number of held admitted
+connections or their handler goroutines. At 500 requested connections, the
+client received 100 admissions and 400 rejections. After each run,
+sampled active connections returned to zero and goroutines returned to two.
+
+In Day 4, 10,000 idle connections produced 10,002 goroutines. Here the budget
+bounded held connections at 100 and sampled goroutines at 102. This comparison
+shows control over resource commitments, not a measurement of safe production
+capacity or total process memory.
+
+The current server also has a five-second idle timeout enabled by default.
+Experiment A's results describe the earlier admission-only version; they
+should not be interpreted as a 30-second hold under the current defaults.
+
+### Experiment B — Idle Connection Deadline
+
+Next I added `-idle-timeout`, defaulting to five seconds. Before each read,
+the handler sets a read deadline to the current time plus the timeout. After
+a successful read, the next iteration renews it. This limits time without
+received data rather than imposing a fixed total connection lifetime.
+When an idle read times out, the handler returns and its deferred cleanup
+closes the connection and releases the admission slot.
+
+I deliberately reduced the budget to three to make the transition visible:
+
+```sh
+go run ./load/protection/connections/server -max-connections 3 -idle-timeout 5s
+go run ./load/protection/connections/client -clients 3 -duration 15s
+```
+
+The client reported:
+
+```text
+requested=3 successful=3 rejected=0 failed=0 unattempted=0
+holding connections for 15s; no requests sent; Ctrl+C closes them early
+closing connections
+```
+
+Server samples transitioned from:
+
+```text
+active=3 admitted=3 rejected=0 goroutines=5
+```
+
+to approximately five seconds after admission:
+
+```text
+active=0 admitted=3 rejected=0 goroutines=2
+```
+
+The server reclaimed the idle connections before the client's 15-second hold
+ended. The client retained its local connection objects but did not read after
+the initial acknowledgment, so it did not measure when the server closed them.
+`successful=3` describes initial admissions, not connections remaining alive
+for the full hold. This experiment demonstrated cleanup; no new group arrived
+to test reuse yet.
+
+### Experiment C — Resource Reclamation and Slot Reuse
+
+I then used the same three-slot budget and five-second idle timeout with two
+waves of three clients. Each wave held its local connections for seven seconds,
+giving the server time to reclaim them before the client closed them.
+
+```sh
+go run ./load/protection/connections/server -max-connections 3 -idle-timeout 5s
+go run ./load/protection/connections/client -clients 3 -waves 2 -duration 7s
+```
+
+Both waves reported three successful admissions, zero rejections, zero failures,
+and zero unattempted connections. Repeated server samples omitted, the observed
+sequence was:
+
+```text
+active=3 admitted=3 rejected=0 goroutines=5
+active=0 admitted=3 rejected=0 goroutines=2
+active=3 admitted=6 rejected=0 goroutines=5
+active=0 admitted=6 rejected=0 goroutines=2
+```
+
+The first wave's active count returned to zero after the server's five-second
+idle deadline expired, while the client was still within its seven-second hold.
+The second wave then obtained all three slots. The cumulative
+`admitted=6` records six admissions over time, while `active=3` shows that only
+three connections were consuming the budget simultaneously. After the second
+idle timeout, the server again returned to zero active connections and two
+goroutines.
+
+This demonstrated resource reclamation followed by capacity reuse on the same
+server, without increasing the configured budget.
+
+### What I Learned
+
+I learned that admission and reclamation solve complementary problems. A
+connection limit bounds simultaneous commitments, but idle clients can occupy
+that budget indefinitely without a cleanup policy. An idle deadline lets the
+server reclaim those commitments and make capacity available again.
+
+I also learned to separate TCP establishment from application admission, and
+initial admission from ongoing connection liveness. The server counters and
+client acknowledgments answer different questions; interpreting them correctly
+is part of designing the experiment.
+
+Finally, refreshing a deadline matters. A deadline set once would limit total
+connection lifetime. Renewing it before successive reads expresses an inactivity
+policy. In this experiment, receiving bytes is the only definition of progress.
+
+### Limitations
+
+- Admission happens after TCP establishment and `Accept()`. The budget bounds
+  application-admitted connections, not all TCP connections reaching the machine
+  or OS socket resources. Rejected connections briefly consume sockets too.
+- The synchronous `BUSY` write runs in the main accept loop. Its one-second
+  deadline bounds a stalled write, but a rejection can delay the next `Accept()`
+  by up to one second. Slow or malicious client populations were not tested.
+- The client does not monitor closure after `OK`. Its success counts measure
+  admission, and its hold duration describes local behavior rather than server
+  connection lifetime.
+- Timeout timing is inferred from once-per-second samples and the configured
+  deadline. Exact close times and timeout-specific error counters were not
+  recorded; the handler exits on any read error.
+- All clients were idle after admission. Deadline renewal under periodic data,
+  meaningful application progress, and clients sending occasional bytes to
+  retain slots were not tested.
+- Runs were sequential over Windows loopback on one machine. They do not measure
+  burst admission throughput, remote-network behavior, TLS costs, or safe
+  production capacity. Memory and kernel resource usage were not measured here.
+
+### Conclusion
+
+The admission budget kept held connections bounded despite excess demand.
+The idle deadline reclaimed admitted connections before clients voluntarily
+closed them, and a later wave reused the released slots. A server can protect
+finite resources by limiting admission and reclaiming idle commitments so that
+bounded capacity becomes available to subsequent clients.
