@@ -428,8 +428,9 @@ behavior change the response to overload.
 ### Experiment Setup
 
 I created a separate [queue server](../../load/backpressure/queue/server/main.go)
-and [client](../../load/backpressure/queue/client/main.go), preserving the earlier
-CPU-bound experiment.
+and [client](../../load/backpressure/queue/client/main.go),
+reusing the earlier persistent-connection and closed-loop client structure while
+changing the workload to an explicit queue and one slow worker.
 
 The server listens on `:9200`. Connection handlers submit jobs to a buffered Go
 channel with capacity four. One worker processes jobs using an artificial
@@ -701,7 +702,7 @@ working set or OS socket-buffer memory.
 
 I recorded representative readings while connections were held and observed
 what happened after they closed. The baseline was approximately zero connections,
-two goroutines, 83 KB of heap allocation, 128 KiB of stack memory, and 6.1 MB
+two goroutines, 83 KB of heap allocation, 128 KiB of stack memory, and 6.38 MB
 of runtime Sys.
 
 ### Results
@@ -1013,3 +1014,97 @@ The idle deadline reclaimed admitted connections before clients voluntarily
 closed them, and a later wave reused the released slots. A server can protect
 finite resources by limiting admission and reclaiming idle commitments so that
 bounded capacity becomes available to subsequent clients.
+
+---
+
+## Day 6 — Controlled Load Experiment and Final Synthesis
+
+### Goal
+
+Consolidate the existing CPU-bound measurements before drawing the final
+engineering conclusions for Networking Under Load. This comparison reuses
+recorded Day 2 runs from the same Day 1/2 server and client; no new workload,
+measurement logic, or load-testing framework was introduced.
+
+### Final Controlled-Load Table
+
+Each run used the existing `doWork()` workload, a ten-second measurement
+duration, and a closed-loop client with one request in flight per client.
+Throughput counts completed requests per second. Latencies are client-observed
+successful-request response times, rounded here to three decimal places.
+
+| Clients | Throughput (req/s) | p50 (ms) | Average (ms) | p95 (ms) | Observed CPU peak |
+| ------: | -----------------: | -------: | -----------: | -------: | ----------------- |
+|       1 |            1,328.6 |    0.728 |        0.753 |    1.090 | ~30%              |
+|       4 |            3,160.2 |    1.229 |        1.265 |    1.926 | ~89%              |
+|       6 |            3,432.3 |    1.640 |        1.748 |    2.810 | ~100%             |
+|      10 |            3,607.8 |    2.636 |        2.771 |    4.822 | ~100%             |
+|      20 |            3,453.2 |    5.397 |        5.789 |   10.034 | Not recorded      |
+
+CPU values are manually observed peaks, not synchronized full-window averages.
+Their process-versus-whole-machine attribution was not separately confirmed
+for this series. CPU percentages are approximate observations.
+These are individual runs, not repeated-run averages.
+
+The comparison shows throughput increasing strongly from one to four clients,
+then gaining progressively less as observed CPU utilization reaches saturation.
+Increasing from ten to twenty clients produced slightly lower throughput in
+the recorded run while average and p95 latency both roughly doubled. More
+concurrency beyond useful processing capacity mainly increased response time
+in this experiment.
+
+### What I Learned
+
+The experiments showed that concurrency is useful only while the limiting
+resource has available capacity. Once CPU became saturated, additional
+concurrency primarily increased waiting time rather than useful throughput.
+
+I also learned that overload is not only a performance problem. Excess work
+must have an explicit policy: it can wait, be rejected, or be controlled by
+limits and timeouts. The choice affects latency, resource consumption, and
+retry pressure.
+
+The resource experiments showed that network connections themselves are
+resource commitments. Connection limits and idle timeouts can therefore
+protect finite resources and allow capacity to be reused.
+
+Finally, measuring throughput alone is insufficient. Throughput, latency,
+tail latency, resource utilization, and overload behavior must be considered
+together when evaluating a networked service.
+
+### Phase 7 — Final Conclusions
+
+Across these experiments, I observed a consistent relationship between
+concurrency, capacity, waiting, and resource consumption.
+
+- Increasing concurrency improved throughput while spare CPU capacity existed.
+- After CPU saturation, throughput approached a ceiling while latency continued
+  to increase.
+- A bounded queue limited buffered waiting but did not eliminate waiting or
+  resource consumption.
+- Blocking and rejection represented different overload policies.
+- Immediate retries could create substantial retry pressure.
+- Persistent connections consumed goroutines and runtime memory even while idle.
+- Connection limits bounded simultaneous application commitments.
+- Idle timeouts reclaimed unused commitments and allowed later clients to reuse
+  capacity.
+- Little's Law provided a useful consistency check for the closed-loop
+  measurements.
+
+The main engineering lesson is that a network service has finite capacity.
+Concurrency can help use that capacity, but concurrency itself does not create
+more capacity. Once a bottleneck is saturated, protecting the bottleneck and
+defining explicit overload behavior becomes more important than simply
+allowing more work to enter the system.
+
+### Phase 7 — Overall Limitations
+
+- The experiments used synthetic workloads rather than a production service.
+- Most experiments used closed-loop clients rather than an independently
+  controlled arrival rate.
+- Client and server ran on the same Windows machine over loopback.
+- CPU measurements were manual observations rather than instrumented metrics.
+- Database, disk, downstream-service, remote-network, and kernel-level
+  resource behavior were not investigated.
+- The experiments demonstrate behavior in this environment; they do not define
+  production capacity limits.
