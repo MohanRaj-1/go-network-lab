@@ -42,6 +42,12 @@ udp/
 
 protocol/       # Shared application protocol package
 
+load/
+├── concurrency/            # CPU-bound throughput and latency experiments
+├── backpressure/queue/     # Bounded queue with blocking and rejection policies
+├── resources/connections/  # Idle connection and Go runtime resource measurements
+└── protection/connections/ # Admission limits, idle deadlines, and slot reuse
+
 internal/
 ├── rawhttp/    # HTTP parsing and connection handling
 └── dns/        # DNS encoding, decoding, validation, UDP and TCP lookup
@@ -149,9 +155,29 @@ Implemented and explored:
 
 See [`docs/learnings/08-udp-fundamentals.md`](docs/learnings/08-udp-fundamentals.md).
 
+### Phase 7 — Networking Under Load
+
+Status: Complete
+
+Implemented and explored:
+
+- CPU-bound throughput and latency under increasing client concurrency
+- Closed-loop measurements with one request in flight per client
+- CPU saturation, diminishing throughput returns, and rising tail latency
+- Little's Law as a consistency check for throughput and average latency
+- Bounded queues with blocking and rejection policies
+- Immediate retries and retry pressure
+- Resource costs of up to 10,000 idle TCP connections in this environment
+- Application admission limits and explicit `OK` / `BUSY` responses
+- Rolling idle read deadlines, resource reclamation, and two-wave slot reuse
+- Final synthesis of capacity, waiting, resource use, and protection
+- Measurement limitations and the distinction between experimental results and production capacity
+
+See [`docs/learnings/09-networking-under-load.md`](docs/learnings/09-networking-under-load.md).
+
 ### Upcoming
 
-Future experiments include HTTP/2, WebSockets, gRPC, service-to-service networking, and networking under load. TLS/HTTPS and DNS over UDP/TCP are documented in the completed experiments above.
+Future experiments include HTTP/2, WebSockets, gRPC, and service-to-service networking.
 
 ## Releases
 
@@ -161,4 +187,4 @@ Future experiments include HTTP/2, WebSockets, gRPC, service-to-service networki
 
 🚧 In Development
 
-Current milestone: `v0.1.0`
+Current milestone: Networking Under Load — Phase 7 Complete
