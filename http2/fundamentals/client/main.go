@@ -6,17 +6,31 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 )
 
 func main() {
+
+	keyLogPath := filepath.Join(os.TempDir(), "go-network-lab-tls-keys.log")
+
+	keyLogFile, err := os.Create(keyLogPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer keyLogFile.Close()
+
+	fmt.Println("TLS key log:", keyLogPath)
+
 	transport := &http.Transport{
 		MaxConnsPerHost:     1,
 		MaxIdleConnsPerHost: 1,
 		DisableKeepAlives:   false,
 
 		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
+			InsecureSkipVerify: true, // Local self-signed certificate experiment only.
+			KeyLogWriter:       keyLogFile,
 		},
 
 		ForceAttemptHTTP2: true,

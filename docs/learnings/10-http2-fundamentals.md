@@ -176,3 +176,130 @@ Comparing handler time with client time exposed connection waiting in the
 HTTP/1.1 baseline. HTTP/2 multiplexing let independent requests progress
 concurrently within the configured connection budget, while TCP's ordered
 delivery remains a shared constraint.
+
+---
+
+## Day 2 — HTTP/2 Framing
+
+### Goal
+
+Inspect the protocol beneath Go's HTTP API: frame fields, stream IDs,
+connection settings, and the flags that delimit headers and bodies.
+
+### Capture Setup
+
+The same HTTPS server and `/slow` + `/fast` client were used. The client now
+sets `tls.Config.KeyLogWriter` to a temporary file named
+`go-network-lab-tls-keys.log` and prints its full path. Wireshark uses that
+file to decrypt the captured TLS traffic and display HTTP/2 frames.
+
+To repeat the inspection:
+
+1. Start the server from the repository root.
+2. Start a Wireshark capture on the loopback interface carrying localhost traffic.
+3. Run the client and note the printed TLS key-log path.
+4. Set Wireshark's TLS `(Pre)-Master-Secret log filename` preference to that file.
+5. Filter for `http2` and expand the HTTP/2 frame entries in the details pane.
+
+The client recreates the key-log file each run. Preserve the matching file
+when retaining a capture for later inspection. It contains secrets that allow
+decryption of the corresponding traffic; keep it out of Git.
+
+The observations below were recorded during Wireshark inspection. Packet numbers
+refer to that capture and will differ in another run.
+
+### Reading the Frame Header
+
+Each frame starts with nine bytes: payload length (3), type (1), flags (1),
+and a reserved bit plus stream identifier (4). Length excludes the header.
+Flags depend on frame type; Wireshark listing a flag field does not mean it
+is set.
+
+The capture associated `/slow` with stream 1 and `/fast` with stream 3.
+Their response frames used the corresponding request stream IDs.
+Connection-level SETTINGS and WINDOW_UPDATE frames appeared on stream 0.
+WINDOW_UPDATE can also target an individual stream.
+
+### Server SETTINGS — Packet 11
+
+Packet 11 contained a server SETTINGS frame on stream 0 with a 30-byte
+payload and no ACK flag. Five six-byte parameters account for the payload:
+`5 × (2-byte identifier + 4-byte value) = 30 bytes`.
+Including the frame header gives `30 + 9 = 39 bytes`.
+
+| Setting | Recorded value | Interpretation of the server's advertisement |
+| --- | ---: | --- |
+| `SETTINGS_MAX_FRAME_SIZE` | 1,048,576 | Maximum frame payload the client is permitted to send to the server. |
+| `SETTINGS_MAX_CONCURRENT_STREAMS` | 250 | Maximum number of concurrent streams the client may initiate. |
+| `SETTINGS_MAX_HEADER_LIST_SIZE` | 10,488,896 | Advisory uncompressed field-section size limit. |
+| `SETTINGS_HEADER_TABLE_SIZE` | 4,096 | Maximum HPACK dynamic-table size for the client's encoder. |
+| `SETTINGS_INITIAL_WINDOW_SIZE` | 10,485,760 | Initial per-stream receive window; not the connection window. |
+
+These settings describe this capture, not universal Go defaults.
+Their direction matters: the server advertises constraints to the client.
+The frame-size value is valid: the permitted range is 16,384–16,777,215 bytes.
+An ACK acknowledges SETTINGS and carries no payload.
+
+The packet's reported captured size was 125 bytes. That includes lower-layer
+and TLS overhead, so it must not be equated with the 39-byte HTTP/2 frame.
+
+### `/fast` Response — Packet 24
+
+The expanded response details recorded two frames on stream 3:
+
+| Frame | Type | Payload length | Flags | HTTP/2 frame size |
+| --- | ---: | ---: | --- | ---: |
+| HEADERS | 1 | 49 bytes | `0x04`: END_HEADERS | 58 bytes |
+| DATA | 0 | 14 bytes | `0x01`: END_STREAM | 23 bytes |
+
+Wireshark decoded `:status: 200` and
+`content-type: text/plain; charset=utf-8` from the header block.
+The HEADERS frame ended the header block without ending the server's sending
+side of the stream. The following DATA frame carried `fast response\n`
+and ended that side. Its body length matches the handler output:
+`4 + 1 + 8 + 1 = 14 bytes`.
+
+```text
+Server -> client, stream 3
+  HEADERS: 49-byte payload, END_HEADERS
+    :status: 200
+    content-type: text/plain; charset=utf-8
+  DATA: 14-byte payload, END_STREAM
+    fast response\n
+```
+
+END_HEADERS completes a header block; END_STREAM completes one sender's
+side of a stream. The bodyless request HEADERS used `0x05`, combining both.
+END_HEADERS is not a DATA flag.
+
+### HPACK Observation
+
+Wireshark represented `:status: 200` as an indexed header field with index 8.
+That matches HPACK's static-table entry, rather than an uncompressed textual
+status line.
+The observed 49-byte HEADERS payload is an encoded block size, not the size
+of the displayed header text. No compression ratio was measured.
+
+### Interpretation and Limitations
+
+The `/fast` response provides a concrete example of headers and body carried
+in separate frames linked by one stream ID. Its final DATA flag identifies
+completion independently of the other request's stream.
+
+HTTP/2 frame boundaries do not have to align with TLS records or TCP packets.
+One packet can contain multiple frames, and decoding a frame can require
+reassembly across packets. The two frames displayed in packet 24 therefore
+do not imply a universal packet layout.
+
+The SETTINGS values are advertised limits, not measurements of server capacity
+or achieved concurrency. The capture did not test 250 active streams, maximum
+frame payloads, or flow-control exhaustion. Wireshark displayed flow-control
+window information, but this exercise did not analyze its changes.
+
+### What I Learned
+
+I learned to separate decoded HTTP fields from frame metadata and to read the
+actual flags value rather than list every flag shown by Wireshark. The capture
+connected the application response to HEADERS and DATA, confirmed the 14-byte
+body, and showed how stream IDs associate frames with an exchange. SETTINGS
+provided a concrete starting point for investigating flow control and HPACK.
