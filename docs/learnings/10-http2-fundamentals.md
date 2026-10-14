@@ -303,3 +303,97 @@ actual flags value rather than list every flag shown by Wireshark. The capture
 connected the application response to HEADERS and DATA, confirmed the 14-byte
 body, and showed how stream IDs associate frames with an exchange. SETTINGS
 provided a concrete starting point for investigating flow control and HPACK.
+
+---
+
+## Day 3 — HTTP/2 Streams and Flow Control
+
+### Goal
+
+Understand stream lifecycles, frame interleaving, TCP-level head-of-line blocking, and HTTP/2 flow control. Validate the concepts by inspecting decrypted HTTP/2 traffic in Wireshark.
+
+### Stream Lifecycle and Multiplexing
+
+HTTP/2 assigns a stream ID to each stream. In the observed client requests, `/slow` used stream 1 and `/fast` used stream 3. Client-initiated streams use odd IDs; server-initiated streams use even IDs.
+
+Request and response frames belong to the same stream. Frames from different streams can be interleaved, allowing independent request/response exchanges to make progress without waiting for every other stream to finish.
+
+`END_STREAM` indicates that the sender has finished sending on that stream. It does not necessarily mean the entire request/response exchange has finished. For example, a bodyless GET request can end with `END_STREAM` in its request HEADERS while the server still needs to send response headers and body data.
+
+### HTTP/2 Multiplexing and TCP
+
+HTTP/2 multiplexes streams over one TCP connection, but TCP still provides a single ordered byte stream.
+
+If TCP bytes are lost, later bytes can be buffered but cannot be delivered to the application past the missing sequence range until TCP recovers the gap. Consequently, data for multiple HTTP/2 streams can be delayed by loss affecting the shared TCP connection.
+
+HTTP/2 multiplexing reduces HTTP-level blocking in relevant scenarios; it does not eliminate TCP-level head-of-line blocking.
+
+### Flow-Control Model
+
+HTTP/2 flow control operates at two levels:
+
+- **Stream-level window:** Limits DATA transmission on an individual stream.
+- **Connection-level window:** Limits DATA transmission across the connection.
+
+The sender must have sufficient credit in both windows to send a DATA frame. A zero stream window prevents further DATA on that stream, while a zero connection window prevents further DATA across streams on that connection.
+
+A `WINDOW_UPDATE` frame adds credit to the window identified by its stream ID:
+
+- Stream ID `0` updates the connection-level window.
+- A nonzero stream ID updates that stream's window.
+
+The increment is added to the current window; it does not replace the existing balance.
+
+### Slow-Reader Experiment
+
+The existing HTTPS server gained a `/large` endpoint that writes a 4 MiB response in 16 KiB chunks and flushes after each write.
+
+The client requests `/large` over HTTP/2 and reads the response using a 4 KiB application buffer. After each successful `Read`, it sleeps for 100 ms to deliberately slow application-level consumption.
+
+Observed client output:
+
+- Protocol: `HTTP/2.0`
+- Status: `200 OK`
+- Content-Length: `4,194,304` bytes
+- Bytes read: `4,194,304`
+- Read duration: approximately 115 seconds
+
+The response was received completely. The duration is an observation of this local experiment, not a network throughput benchmark. A single `Read` can return fewer than 4 KiB, so the sleep can occur more frequently than once per 4 KiB.
+
+### Wireshark Observations
+
+The capture used TLS key logging to decrypt the HTTPS traffic. The client requested `/large` on stream 1.
+
+To inspect stream-1 DATA and WINDOW_UPDATE frames, I used this Wireshark display filter:
+
+```text
+http2.streamid == 1 && (http2.type == 0 || http2.type == 8)
+```
+
+Connection-level WINDOW_UPDATE frames use stream 0 and require separate inspection.
+
+The following observations were recorded:
+
+1. DATA frames appeared on stream 1 throughout the response transfer.
+2. Both connection-level and stream-level `WINDOW_UPDATE` frames appeared during the transfer.
+3. One observed connection-level update had a 4,096-byte increment. The connection window increased from `1,071,919,103` to `1,071,923,199` bytes.
+4. In the same packet, the stream-1 window increased from `2,306,048` to `2,310,144` bytes, also a 4,096-byte increment.
+5. An earlier connection-level update increased the connection window by `1,073,741,824` bytes (1 GiB).
+
+These values describe the observed Go HTTP/2 implementation and this capture; they should not be treated as universal defaults.
+
+### Interpretation and Limitations
+
+The captured WINDOW_UPDATE increments show that the implementation replenished both connection-level and stream-level flow-control credit during the response transfer. They do not demonstrate a zero-window stall.
+
+The application buffer size does not directly determine the HTTP/2 flow-control window size. Go manages internal buffering and flow-control updates, so the observed 4 KiB increments do not prove a one-to-one relationship with application `Read` calls.
+
+This experiment did not establish that either flow-control window reached zero or that the sender stalled because of flow control. The large connection-level window made connection-window exhaustion unlikely during this 4 MiB transfer.
+
+A packet gap alone would not prove flow-control blocking. Buffering, scheduling, and other implementation behavior can also affect observed timing.
+
+### What I Learned
+
+I learned to distinguish application reads from HTTP/2 flow-control credit, and stream-level limits from connection-level limits. I also verified how `WINDOW_UPDATE` frames identify the window being replenished.
+
+Most importantly, I separated observed packet-level evidence from conclusions that the experiment did not establish. The next useful step would be a more controlled experiment that can demonstrate actual flow-control blocking.
