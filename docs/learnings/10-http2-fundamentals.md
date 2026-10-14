@@ -397,3 +397,109 @@ A packet gap alone would not prove flow-control blocking. Buffering, scheduling,
 I learned to distinguish application reads from HTTP/2 flow-control credit, and stream-level limits from connection-level limits. I also verified how `WINDOW_UPDATE` frames identify the window being replenished.
 
 Most importantly, I separated observed packet-level evidence from conclusions that the experiment did not establish. The next useful step would be a more controlled experiment that can demonstrate actual flow-control blocking.
+
+---
+
+## Day 4 — HTTP/2 Flow-Control Window Interaction
+
+### Goal
+
+Understand how stream-level and connection-level flow-control windows interact, how `WINDOW_UPDATE` restores sending credit, and why a stream can remain blocked even when the connection has available credit.
+
+Day 3 introduced the flow-control mechanism and captured real `WINDOW_UPDATE` frames. This section consolidates the window interaction model and identifies what the existing experiment did and did not demonstrate.
+
+### How the Two Windows Interact
+
+To send DATA on a stream, the sender needs sufficient available credit in both the stream-level window and the connection-level window.
+
+Conceptually, the amount of additional DATA that can be sent at a given moment is limited by the smaller of the two available windows.
+
+| Connection-level credit | Stream-level credit | Result |
+| --- | --- | --- |
+| Available | Available | DATA can be sent, subject to both windows and other protocol constraints. |
+| Available | Zero | DATA on that stream must wait for stream-level credit. Other streams may continue if their windows permit. |
+| Zero | Available | DATA transmission across the connection must wait for connection-level credit. |
+| Zero | Zero | DATA cannot be sent until the necessary credit is restored. |
+
+These are conceptual cases, not states measured in the existing experiment.
+
+Flow control applies to DATA frames. It does not directly restrict HEADERS frames in the same way.
+
+### Understanding WINDOW_UPDATE
+
+A `WINDOW_UPDATE` frame increases the sending credit associated with its stream ID.
+
+- **Stream ID `0`:** Increases the connection-level window.
+- **Nonzero stream ID:** Increases the window for that particular stream.
+- **Increment:** Adds to the existing window; it does not replace the current balance.
+
+For example, suppose Stream 1 has no remaining stream-level credit, while the connection-level window still has available credit.
+
+A connection-level update such as:
+
+```text
+WINDOW_UPDATE
+Stream ID: 0
+Increment: 16384
+```
+
+adds 16,384 bytes of connection-level credit. It does not replenish Stream 1's individual window, so Stream 1 remains unable to send DATA until its stream-level credit is restored.
+
+Conversely, replenishing Stream 1's window does not allow it to send DATA if the connection-level window has no available credit.
+
+### Applying the Model to Multiple Streams
+
+Consider one HTTP/2 connection carrying two streams:
+
+```text
+Connection
+  Connection-level window: available
+
+  Stream 1: large response
+    Stream-level window: zero
+    DATA transmission: blocked
+
+  Stream 3: small response
+    Stream-level window: available
+    DATA transmission: permitted
+```
+
+In this scenario, Stream 1 can be blocked while Stream 3 continues to make progress.
+
+This is an important distinction: stream-level flow control can constrain one stream independently, while connection-level flow control constrains DATA transmission across the connection.
+
+The example assumes that Stream 3 has sufficient credit and that no other constraint prevents transmission.
+
+### What Our Experiment Established
+
+The Day 3 slow-reader experiment transferred a 4 MiB response over HTTP/2 while the client deliberately delayed application-level reads.
+
+Wireshark showed both connection-level and stream-level `WINDOW_UPDATE` frames during the transfer. One observed packet contained a 4,096-byte increment for each window.
+
+These observations establish that the implementation replenished flow-control credit during the transfer. They do not establish that a window reached zero or that transmission paused because of exhausted flow-control credit.
+
+The connection-level window was large in this capture, making connection-window exhaustion unlikely during this particular 4 MiB transfer.
+
+### Why the Application Read Buffer Is Not the Window Size
+
+The client used a 4 KiB buffer when reading the response, but this does not mean the HTTP/2 stream window was 4 KiB.
+
+The application read buffer, internal HTTP/2 buffering, and protocol flow-control windows are different mechanisms. The HTTP/2 implementation manages its own buffering and window updates.
+
+Therefore, the observed 4,096-byte increments must not be interpreted as proof that each application `Read` caused exactly one corresponding `WINDOW_UPDATE`.
+
+### What This Analysis Does Not Prove
+
+- That either flow-control window reached zero.
+- That the server stalled because of flow-control exhaustion.
+- That every application read triggers a matching `WINDOW_UPDATE`.
+- That a packet gap indicates flow-control blocking.
+- That the observed window sizes and update increments are universal Go defaults.
+
+A controlled experiment that deliberately exhausts a flow-control window would be needed to demonstrate an actual zero-window stall directly.
+
+### What I Learned
+
+I learned to reason about HTTP/2 flow control as two independent but jointly enforced limits. A stream needs both stream-level and connection-level credit to send DATA, and replenishing one window does not replenish the other.
+
+I also learned to distinguish a protocol mechanism from evidence of that mechanism becoming a bottleneck. Our capture confirmed that both windows were updated, but it did not demonstrate flow-control exhaustion. That distinction matters when drawing conclusions from packet captures.
