@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -12,6 +13,11 @@ import (
 )
 
 func main() {
+	requests := flag.Int("requests", 1, "number of slow-reader requests")
+	flag.Parse()
+	if *requests < 1 {
+		log.Fatal("requests must be at least 1")
+	}
 
 	keyLogPath := filepath.Join(os.TempDir(), "go-network-lab-tls-keys.log")
 
@@ -40,7 +46,9 @@ func main() {
 		Transport: transport,
 	}
 
-	runSlowReader(client)
+	for i := 0; i < *requests; i++ {
+		runSlowReader(client)
+	}
 }
 
 // runMultiplexing runs the earlier /slow and /fast experiment.
@@ -69,6 +77,9 @@ func runSlowReader(client *http.Client) {
 	resp, err := client.Get("https://localhost:9500/large")
 	if err != nil {
 		log.Fatal(err)
+	}
+	if resp.ProtoMajor != 2 {
+		log.Fatalf("expected HTTP/2, got %s", resp.Proto)
 	}
 	defer resp.Body.Close()
 

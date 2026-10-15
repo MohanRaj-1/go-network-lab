@@ -503,3 +503,79 @@ A controlled experiment that deliberately exhausts a flow-control window would b
 I learned to reason about HTTP/2 flow control as two independent but jointly enforced limits. A stream needs both stream-level and connection-level credit to send DATA, and replenishing one window does not replenish the other.
 
 I also learned to distinguish a protocol mechanism from evidence of that mechanism becoming a bottleneck. Our capture confirmed that both windows were updated, but it did not demonstrate flow-control exhaustion. That distinction matters when drawing conclusions from packet captures.
+
+---
+
+## Day 5 — HPACK Header Compression
+
+### Goal
+
+Understand how HPACK represents HTTP/2 header fields using static-table indices, literal representations, and dynamic-table references. Inspect actual request header blocks in Wireshark and compare their encoded sizes.
+
+### Capture Setup
+
+The existing HTTPS server and client were used to capture two requests to `/large` over HTTP/2.
+
+Both requests used the same TCP connection, with the first request on stream 1 and the second on stream 3. TLS key logging allowed Wireshark to decrypt the traffic and decode the HTTP/2 header blocks.
+
+### First Request — Frame 14
+
+The first request used a 41-byte HPACK header-block fragment. Wireshark decoded six header fields.
+
+| Header field                     | Representation                                  | Index |
+| -------------------------------- | ----------------------------------------------- | ----- |
+| `:authority: localhost:9500`     | Literal with incremental indexing, indexed name | 1     |
+| `:method: GET`                   | Indexed header field                            | 2     |
+| `:path: /large`                  | Literal with incremental indexing, indexed name | 5     |
+| `:scheme: https`                 | Indexed header field                            | 7     |
+| `accept-encoding: gzip`          | Literal with incremental indexing, indexed name | 16    |
+| `user-agent: Go-http-client/2.0` | Literal with incremental indexing, indexed name | 58    |
+
+The indexed fields for `:method` and `:scheme` refer to static-table entries. The other fields use literal representations with incremental indexing, allowing them to be added to the dynamic table.
+
+### Second Request — Frame 3094
+
+The second request used a 9-byte HPACK header-block fragment. Wireshark decoded seven header-block entries, including a header table size update.
+
+| Header field                     | Representation       | Index |
+| -------------------------------- | -------------------- | ----- |
+| `:authority: localhost:9500`     | Indexed header field | 65    |
+| `:method: GET`                   | Indexed header field | 2     |
+| `:path: /large`                  | Indexed header field | 64    |
+| `:scheme: https`                 | Indexed header field | 7     |
+| `accept-encoding: gzip`          | Indexed header field | 63    |
+| `user-agent: Go-http-client/2.0` | Indexed header field | 62    |
+
+Indices 2 and 7 refer to static-table entries. Indices 62–65 refer to dynamic-table entries.
+
+The second request therefore provides direct evidence that the connection's dynamic-table state was reused. Instead of encoding the repeated field values literally, the header block references existing entries.
+
+The header block also contained a dynamic-table size update of 4096 bytes.
+
+### Encoded Size Comparison
+
+| Observation                   | First request                  | Second request |
+| ----------------------------- | ------------------------------ | -------------- |
+| Encoded header-block fragment | 41 bytes                       | 9 bytes        |
+| Decoded header fields         | 6                              | 6              |
+| Dynamic-table references      | None reported for these fields | Four reported  |
+
+The encoded header-block fragment decreased by 32 bytes, from 41 to 9 bytes, approximately a 78% reduction for these two observed blocks.
+
+This is a comparison of two specific encoded header blocks, not a general HPACK compression ratio or a measurement of total network traffic.
+
+### Interpretation and Limitations
+
+The capture demonstrates the role of both static and dynamic tables. Static entries efficiently represent common fields, while dynamic entries allow repeated field values to be referenced within the same connection's compression context.
+
+The decoded header length reported by Wireshark is not the same as the encoded header-block size. Encoded blocks contain compact representations that the decoder reconstructs into header fields.
+
+The experiment used repeated requests to one local endpoint. It did not measure compression across a broad range of headers, connections, or workloads. The observed sizes should not be generalized into a universal compression ratio.
+
+### What I Learned
+
+I learned to distinguish a fully indexed header field from a literal field that uses an indexed name. I also verified that incremental indexing can establish dynamic-table state for later requests.
+
+The second capture demonstrated actual dynamic-table reuse: repeated fields were represented by dynamic-table indices, reducing the encoded header-block fragment from 41 bytes to 9 bytes in this example.
+
+This showed why HPACK's stateful compression can reduce repeated header overhead without removing the logical HTTP headers from subsequent requests.
