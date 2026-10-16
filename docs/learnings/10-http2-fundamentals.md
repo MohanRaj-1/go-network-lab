@@ -579,3 +579,65 @@ I learned to distinguish a fully indexed header field from a literal field that 
 The second capture demonstrated actual dynamic-table reuse: repeated fields were represented by dynamic-table indices, reducing the encoded header-block fragment from 41 bytes to 9 bytes in this example.
 
 This showed why HPACK's stateful compression can reduce repeated header overhead without removing the logical HTTP headers from subsequent requests.
+
+---
+
+## Day 6 — HTTP/2 Implementation and Final Synthesis
+
+### Goal
+
+Consolidate the HTTP/2 concepts explored in this phase and connect protocol-level observations to Go's standard HTTP client and server implementation.
+
+### Go's HTTP/2 Implementation
+
+The experiments used Go's `net/http` package rather than implementing an HTTP/2 stack from scratch.
+
+The server used `http.ListenAndServeTLS`, while the client used `http.Client` and `http.Transport`. The client configured `ForceAttemptHTTP2: true` alongside a custom `TLSClientConfig`.
+
+This configuration enables Go's transport to attempt HTTP/2 under the custom TLS configuration. It does not guarantee negotiation. The experiment verified the negotiated protocol through `resp.Proto`, which reported `HTTP/2.0` in the successful runs.
+
+The implementation handled protocol details such as framing, stream management, flow control, and HPACK. The experiments used Wireshark to inspect those mechanisms rather than reimplementing them.
+
+### Concepts Consolidated
+
+**Multiplexing and streams**
+
+HTTP/2 allows multiple request/response exchanges to share one connection using independent streams. The `/slow` and `/fast` experiment demonstrated that the fast response could complete while the slow handler was still running.
+
+**Binary framing**
+
+HTTP/2 carries headers, data, settings, and control information in frames. Frame type, flags, stream ID, and payload length help identify each frame's role.
+
+**Stream lifecycle**
+
+Request and response frames use the same stream ID. `END_HEADERS` marks the end of a header block, while `END_STREAM` marks the end of one endpoint's sending side of a stream.
+
+**TCP-level head-of-line blocking**
+
+HTTP/2 multiplexing does not remove TCP's ordered delivery constraint. Loss affecting the shared TCP byte stream can delay data belonging to multiple HTTP/2 streams.
+
+**Flow control**
+
+DATA transmission requires available credit in both the stream-level and connection-level windows. `WINDOW_UPDATE` increases the credit associated with the identified window.
+
+The slow-reader experiment captured both types of updates, but did not demonstrate a zero-window stall.
+
+**HPACK**
+
+HPACK represents header fields using static-table indices, literal representations, and dynamic-table references. The repeated-request experiment showed dynamic-table reuse in the second request.
+
+The encoded header-block fragment decreased from 41 bytes to 9 bytes in the observed requests. This is a result from the specific capture, not a general compression ratio.
+
+### Evidence and Limitations
+
+The phase combined application-level experiments with decrypted Wireshark captures.
+
+The observations were made using a local Go server and client over loopback, with a self-signed certificate and a synthetic workload. The experiments were designed to understand protocol behavior, not to establish production performance or capacity.
+
+The work did not implement a complete HTTP/2 stack, HPACK encoder, or custom flow-control mechanism. It also did not comprehensively test packet loss, maximum concurrent streams, or flow-control exhaustion.
+
+### Final Learning Outcome
+
+I learned to connect Go's high-level HTTP APIs with the protocol behavior visible in HTTP/2 frames. I practiced forming hypotheses, running controlled experiments, inspecting evidence, interpreting results, and documenting limitations.
+
+The most important outcome was learning to distinguish what an experiment directly demonstrates from what the protocol theory predicts but the experiment has not verified.
