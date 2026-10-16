@@ -210,6 +210,36 @@ Detailed setup, measurements, capture interpretations, and limitations are in
 
 Future experiments include WebSockets, gRPC, and service-to-service networking.
 
+## Running the HTTP/2 Experiments
+
+Start the server from the repository root:
+
+```bash
+go run ./http2/fundamentals/server
+```
+
+In a second terminal, run one of the experiments:
+
+```bash
+# HTTP/2 slow-reader and flow-control observation
+go run ./http2/fundamentals/client -experiment=slow-reader
+
+# HTTP/2 multiplexing
+go run ./http2/fundamentals/client -experiment=multiplexing
+
+# HTTP/1.1 baseline with a single connection
+go run ./http2/fundamentals/client -experiment=multiplexing -http2=false
+```
+
+`-experiment` defaults to `slow-reader`, `-http2` defaults to `true`, and
+`-requests` defaults to `1`. Use `-requests=2` to repeat the selected experiment
+sequentially through the same client and transport; for multiplexing, each run
+sends one `/slow` + `/fast` pair. The slow-reader experiment requires HTTP/2.
+
+The client uses a local self-signed certificate for these experiments.
+Certificate verification is disabled in the experimental client; do not use
+this configuration for production traffic.
+
 ## Releases
 
 - `v0.1.0` — Completed TCP, application protocol, raw HTTP, TLS/HTTPS, and DNS experiments.

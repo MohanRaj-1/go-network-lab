@@ -158,15 +158,19 @@ go run ./http2/fundamentals/server
 In a second terminal:
 
 ```sh
-go run ./http2/fundamentals/client
+go run ./http2/fundamentals/client -experiment=multiplexing
 ```
 
-The current client enables `ForceAttemptHTTP2: true`. Verify `protocol=HTTP/2.0`
-and `status=200 OK` before interpreting latency. To repeat the HTTP/1.1
-baseline with this transport, temporarily set `ForceAttemptHTTP2: false`,
-run a fresh client process, and confirm `protocol=HTTP/1.1`. Restore `true`
-afterward. If the protocol differs, investigate configuration before comparing
-timings; the flag controls an attempt, while the response records the outcome.
+The client attempts HTTP/2 by default. Verify `protocol=HTTP/2.0` and
+`status=200 OK` before interpreting latency. To repeat the HTTP/1.1 baseline:
+
+```sh
+go run ./http2/fundamentals/client -experiment=multiplexing -http2=false
+```
+
+Confirm `protocol=HTTP/1.1`. The `-http2` flag controls `ForceAttemptHTTP2`
+for this custom TLS transport; the response records the actual outcome.
+Each command starts a fresh client process.
 
 ### What I Learned
 
@@ -192,6 +196,8 @@ The same HTTPS server and `/slow` + `/fast` client were used. The client now
 sets `tls.Config.KeyLogWriter` to a temporary file named
 `go-network-lab-tls-keys.log` and prints its full path. Wireshark uses that
 file to decrypt the captured TLS traffic and display HTTP/2 frames.
+
+Select this experiment with `-experiment=multiplexing` when running the client.
 
 To repeat the inspection:
 
@@ -345,6 +351,16 @@ A `WINDOW_UPDATE` frame adds credit to the window identified by its stream ID:
 The increment is added to the current window; it does not replace the existing balance.
 
 ### Slow-Reader Experiment
+
+With the server running, select the slow-reader experiment explicitly:
+
+```sh
+go run ./http2/fundamentals/client -experiment=slow-reader
+```
+
+This is also the default experiment. `-requests` defaults to 1 and controls
+sequential runs using the same client and transport. For multiplexing, each
+run sends one `/slow` + `/fast` pair. The slow-reader experiment requires HTTP/2.
 
 The existing HTTPS server gained a `/large` endpoint that writes a 4 MiB response in 16 KiB chunks and flushes after each write.
 
@@ -515,6 +531,12 @@ Understand how HPACK represents HTTP/2 header fields using static-table indices,
 ### Capture Setup
 
 The existing HTTPS server and client were used to capture two requests to `/large` over HTTP/2.
+
+To repeat both requests in one client process:
+
+```sh
+go run ./http2/fundamentals/client -experiment=slow-reader -requests=2
+```
 
 Both requests used the same TCP connection, with the first request on stream 1 and the second on stream 3. TLS key logging allowed Wireshark to decrypt the traffic and decode the HTTP/2 header blocks.
 

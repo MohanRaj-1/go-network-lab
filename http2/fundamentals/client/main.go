@@ -13,10 +13,18 @@ import (
 )
 
 func main() {
-	requests := flag.Int("requests", 1, "number of slow-reader requests")
+	experiment := flag.String("experiment", "slow-reader", "experiment to run: multiplexing or slow-reader")
+	requests := flag.Int("requests", 1, "number of sequential experiment runs")
+	http2 := flag.Bool("http2", true, "attempt HTTP/2 (disable for the multiplexing HTTP/1.1 baseline)")
 	flag.Parse()
+	if *experiment != "multiplexing" && *experiment != "slow-reader" {
+		log.Fatal("experiment must be multiplexing or slow-reader")
+	}
 	if *requests < 1 {
 		log.Fatal("requests must be at least 1")
+	}
+	if *experiment == "slow-reader" && !*http2 {
+		log.Fatal("slow-reader requires -http2=true")
 	}
 
 	keyLogPath := filepath.Join(os.TempDir(), "go-network-lab-tls-keys.log")
@@ -39,15 +47,21 @@ func main() {
 			KeyLogWriter:       keyLogFile,
 		},
 
-		ForceAttemptHTTP2: true,
+		ForceAttemptHTTP2: *http2,
 	}
 
 	client := &http.Client{
 		Transport: transport,
 	}
+	defer transport.CloseIdleConnections()
 
 	for i := 0; i < *requests; i++ {
-		runSlowReader(client)
+		switch *experiment {
+		case "multiplexing":
+			runMultiplexing(client)
+		case "slow-reader":
+			runSlowReader(client)
+		}
 	}
 }
 
