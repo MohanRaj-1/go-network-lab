@@ -53,6 +53,11 @@ internal/
 └── dns/        # DNS encoding, decoding, validation, UDP and TCP lookup
     └── client/ # Runnable IPv4 lookup example
 
+http2/
+└── fundamentals/ # HTTP/2 multiplexing, framing, flow control, and HPACK experiments
+    ├── client/   # Shared transport, slow reads, repeated requests, and TLS key logging
+    └── server/   # /slow, /fast, and chunked writes for a 4 MiB /large response
+
 docs/
 └── learnings/  # Notes, experiments, and observations
 ```
@@ -175,16 +180,43 @@ Implemented and explored:
 
 See [`docs/learnings/09-networking-under-load.md`](docs/learnings/09-networking-under-load.md).
 
+### Phase 8 — HTTP/2 Fundamentals
+
+Status: Complete
+
+Implemented and explored:
+
+- Go's standard `net/http` HTTP/2 support over TLS, with explicit protocol verification
+- Single-connection HTTP/1.1 baseline compared with HTTP/2 multiplexing of `/slow` and `/fast`
+- Decrypted Wireshark captures using TLS key logging
+- Binary frame headers, SETTINGS, stream IDs, END_HEADERS, and END_STREAM
+- A 4 MiB `/large` response and deliberately slow application reads
+- Stream-level and connection-level flow-control credit and WINDOW_UPDATE observations
+- Repeated requests over one connection to inspect HPACK static and dynamic tables
+
+Key lessons:
+
+- HTTPS alone does not establish that HTTP/2 was negotiated.
+- Multiplexing lets independent exchanges progress on one connection, while TCP's ordered delivery remains a shared constraint.
+- Captured window updates demonstrate credit replenishment; the slow-reader experiment did not establish a zero-window stall.
+- HPACK dynamic-table reuse reduced the observed request header-block fragment from 41 to 9 bytes; this is a capture-specific result.
+- Application timings, packet observations, and protocol reasoning support different conclusions and need explicit limitations.
+
+The experiments use Go's HTTP/2 implementation rather than a custom protocol stack.
+Detailed setup, measurements, capture interpretations, and limitations are in
+[`docs/learnings/10-http2-fundamentals.md`](docs/learnings/10-http2-fundamentals.md).
+
 ### Upcoming
 
-Future experiments include HTTP/2, WebSockets, gRPC, and service-to-service networking.
+Future experiments include WebSockets, gRPC, and service-to-service networking.
 
 ## Releases
 
 - `v0.1.0` — Completed TCP, application protocol, raw HTTP, TLS/HTTPS, and DNS experiments.
+- `v0.2.0` — Networking Fundamentals & Load Behavior; completed UDP fundamentals and networking-under-load experiments.
 
 ## Project Status
 
 🚧 In Development
 
-Current milestone: Networking Under Load — Phase 7 Complete
+Current milestone: HTTP/2 Fundamentals — Phase 8 Complete
