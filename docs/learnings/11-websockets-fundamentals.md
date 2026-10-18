@@ -113,3 +113,119 @@ This is consistent with the client closing the underlying connection after compl
 ### Evidence and Limitations
 
 These findings record the supplied client output, server logs, and Wireshark capture review. The client waited for each response before sending its next message. Simultaneous bidirectional messaging, fragmentation, control-frame behavior, and graceful connection shutdown were not evaluated in this experiment.
+
+## Day 3 — WebSocket Frames and Control Frames
+
+### Objective
+
+Inspect WebSocket text-frame headers, verify the payload-length encoding boundary at 126 bytes, and observe a ping/pong exchange in Wireshark.
+
+### Implementation
+
+- Inspected an ordinary client text frame from the existing messaging experiment.
+- Changed the client inputs to `Hello`, 125 repetitions of `A`, 126 repetitions of `B`, and 130 repetitions of `C`, using `strings.Repeat` for the controlled lengths.
+- Kept the sequential send-and-read loop. The server's `Echo: ` prefix adds six bytes to each response payload.
+- Added a `conn.Ping(ctx)` call after the message loop.
+- Inspected traffic captured on the Windows loopback interface using `tcp.port == 8080 && websocket`.
+
+### Ordinary Text Frame
+
+Experiment A's frame 10 carried `Hello from client` from client port `62078` to server port `8080`:
+
+| Field | Observed value |
+| --- | --- |
+| FIN | True |
+| Reserved bits | 0 |
+| Opcode | Text (1) |
+| MASK | True |
+| Payload length | 17 bytes |
+| Masking key | `da9e581d` (four bytes) |
+
+This was a final text frame carrying the complete observed message. Its TCP payload was 23 bytes: a two-byte base header, a four-byte masking key, and 17 bytes of message data.
+
+### Payload-Length Boundary
+
+Experiment B used client port `52636` and server port `8080`. The supplied frame details showed:
+
+| Capture frame | Client payload | Seven-bit length indicator | Extended length | TCP payload bytes |
+| --- | --- | --- | --- | --- |
+| 10 | `Hello` (5 bytes) | 5 | None | 11 |
+| 14 | 125 × `A` | 125 | None | 131 |
+| 18 | 126 × `B` | 126 | 126 (16 bits) | 134 |
+| 22 | 130 × `C` | 126 | 130 (16 bits) | 138 |
+
+All four client frames had FIN true, opcode 1, and MASK true. At 125 bytes, the length fits directly in the seven-bit length field. At 126 bytes, the value 126 becomes a marker indicating that the actual length follows in a two-byte extended field. The 130-byte payload uses the same marker with an extended value of 130.
+
+The length indicator is only the lower seven bits of the second header byte. For these masked client frames, the complete second byte is `0xFD` for the direct length 125 and `0xFE` for the extended-length marker 126.
+
+Payload length excludes the WebSocket header and masking key. Frame 14 carried `2 + 4 + 125 = 131` TCP payload bytes; frame 18 carried `2 + 2 + 4 + 126 = 134`. These are observations from the supplied segments, not a general rule that every WebSocket frame occupies exactly one TCP segment.
+
+### Ping and Pong
+
+Experiment C showed these control frames on the connection between client port `64382` and server port `8080`:
+
+| Field | Frame 26: client ping | Frame 28: server pong |
+| --- | --- | --- |
+| Direction | Client → server | Server → client |
+| Opcode | Ping (9) | Pong (10) |
+| FIN | True | True |
+| MASK | True | False |
+| Payload length | 1 byte | 1 byte |
+| Payload in hexadecimal | `31` | `31` |
+| TCP payload bytes | 7 | 3 |
+
+The ping used masking key `6ba4254b`. The pong returned the same one-byte payload, `0x31`, representing ASCII `1`. This verifies a corresponding pong on the wire.
+
+The packet evidence alone did not establish that the client's `conn.Ping(ctx)` call returned successfully. At this stage, the client had no active read after its message loop. The follow-up investigation below verifies API completion separately.
+
+### Why Masking Is Not Encryption
+
+Masking transforms payload bytes using a repeating four-byte key that is included in the frame itself. Anyone who can read the frame can recover the payload using that key, as Wireshark did in these captures. Masking provides neither confidentiality nor authentication. This experiment used unencrypted `ws://` traffic; TLS protection with `wss://` was not evaluated.
+
+### Key Learnings
+
+1. FIN, opcode, MASK, and payload length describe how a frame carries data.
+2. The observed client text frames were final, masked frames with opcode 1.
+3. The 125-byte payload used a direct length; the 126-byte and 130-byte payloads used marker 126 followed by a 16-bit actual length.
+4. Header bytes and masking keys are excluded from the payload length.
+5. The observed ping and pong used opcodes 9 and 10 and carried matching payloads. The client ping was masked; the server pong was unmasked.
+6. Masking is reversible using information carried in the frame and does not encrypt the connection.
+
+### Evidence and Limitations
+
+These initial findings are based on the supplied Wireshark frame details from separate experiment captures; frame numbers and client ports are specific to each capture. Fragmented messages, continuation frames, the 64-bit payload-length encoding, and close frames were not investigated. The initial observations did not establish simultaneous application messaging or successful completion of the client's ping API call.
+
+### Follow-up — Ping Timeout and Active Reader
+
+The original client completed all four text/echo exchanges, then failed during the ping:
+
+```text
+Sending WebSocket ping
+ping failed: failed to ping: failed to wait for pong: context deadline exceeded
+```
+
+This timeout was reproduced before changing the client. The successful text-message results remain valid; observing a pong in an earlier capture did not prove that the client processed it.
+
+The pinned `github.com/coder/websocket` v1.8.15 documentation explains that [`Conn.Ping`](https://pkg.go.dev/github.com/coder/websocket@v1.8.15#Conn.Ping) sends a ping and waits for a reader to process the pong; it does not read the connection itself. [`Conn.Read`](https://pkg.go.dev/github.com/coder/websocket@v1.8.15#Conn.Read) wraps `Reader`, which handles incoming control frames. Only one reader may be active at a time.
+
+The smallest change for this client was to call `conn.CloseRead(ctx)` after reading the last echo reply and before calling `conn.Ping(ctx)`. Despite its name, [`Conn.CloseRead`](https://pkg.go.dev/github.com/coder/websocket@v1.8.15#Conn.CloseRead) starts a background reader that processes control frames. It is appropriate here because no further application messages are expected. Unexpected data messages would close the connection with a policy violation, so this helper is not suitable if later experiments need more application reads.
+
+The helper starts after the sequential reads finish, avoiding concurrent application readers. Its lifetime is bounded by the existing context and deferred `conn.CloseNow()` cleanup. The server and the shared ten-second timeout were unchanged.
+
+On the verification run, all four echo exchanges succeeded and `conn.Ping(ctx)` returned `nil`, allowing the client to print:
+
+```text
+Sending WebSocket ping
+WebSocket ping/pong completed successfully
+```
+
+A new Windows loopback capture, inspected with Wireshark's TShark, confirmed:
+
+| Frame | Direction | Opcode | MASK | Payload |
+| --- | --- | --- | --- | --- |
+| 26 | Client `56262` → server `8080` | Ping (9) | True | `0x31` |
+| 28 | Server `8080` → client `56262` | Pong (10) | False | `0x31` |
+
+Both frames had FIN true and a one-byte payload.
+
+The missing active reader was consistent with the observed failure and the documented reader requirement. Adding a background reader resolved the timeout in this test; the successful rerun alone does not prove that it was the only possible cause. The updated run verified both the wire exchange and API completion, without establishing simultaneous application messaging.

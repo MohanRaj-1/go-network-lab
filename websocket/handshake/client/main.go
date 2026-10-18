@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -38,9 +39,10 @@ func main() {
 	fmt.Println("WebSocket handshake succeeded")
 
 	messages := []string{
-		"Hello from client",
-		"Second message on the same connection",
-		"Third message on the same connection",
+		"Hello",
+		strings.Repeat("A", 125),
+		strings.Repeat("B", 126),
+		strings.Repeat("C", 130),
 	}
 
 	for _, message := range messages {
@@ -57,5 +59,17 @@ func main() {
 
 		fmt.Printf("Received (type=%v): %s\n", messageType, response)
 	}
+
+	// All echo replies have been read. Keep one background reader active
+	// to process control frames while Ping waits for its pong.
+	conn.CloseRead(ctx)
+
+	fmt.Println("\nSending WebSocket ping")
+
+	if err := conn.Ping(ctx); err != nil {
+		log.Fatalf("ping failed: %v", err)
+	}
+
+	fmt.Println("WebSocket ping/pong completed successfully")
 
 }
