@@ -37,14 +37,25 @@ func main() {
 
 	fmt.Println("WebSocket handshake succeeded")
 
-	if err := conn.Write(ctx, websocket.MessageText, []byte("Hello from client")); err != nil {
-		log.Fatalf("send message: %v", err)
+	messages := []string{
+		"Hello from client",
+		"Second message on the same connection",
+		"Third message on the same connection",
 	}
 
-	messageType, message, err := conn.Read(ctx)
-	if err != nil {
-		log.Fatalf("read response: %v", err)
+	for _, message := range messages {
+		fmt.Printf("\nSending: %s\n", message)
+
+		if err := conn.Write(ctx, websocket.MessageText, []byte(message)); err != nil {
+			log.Fatalf("send message: %v", err)
+		}
+
+		messageType, response, err := conn.Read(ctx)
+		if err != nil {
+			log.Fatalf("read response: %v", err)
+		}
+
+		fmt.Printf("Received (type=%v): %s\n", messageType, response)
 	}
 
-	fmt.Printf("Received message (type=%v): %s\n", messageType, message)
 }

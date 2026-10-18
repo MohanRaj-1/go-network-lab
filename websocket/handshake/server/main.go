@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"log"
 	"net/http"
 	"time"
@@ -41,21 +40,22 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("WebSocket handshake succeeded")
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
+	for {
+		messageType, message, err := conn.Read(r.Context())
+		if err != nil {
+			log.Printf("WebSocket read ended: %v", err)
+			return
+		}
 
-	messageType, message, err := conn.Read(ctx)
-	if err != nil {
-		log.Printf("Read message: %v", err)
-		return
+		log.Printf("Received WebSocket message: %q", message)
+
+		reply := append([]byte("Echo: "), message...)
+		if err := conn.Write(r.Context(), messageType, reply); err != nil {
+			log.Printf("WebSocket write failed: %v", err)
+			return
+		}
+
+		log.Printf("Response sent: %q", reply)
 	}
 
-	log.Printf("Received WebSocket message: %q", message)
-
-	if err := conn.Write(ctx, messageType, []byte("Hello from server")); err != nil {
-		log.Printf("Write message: %v", err)
-		return
-	}
-
-	log.Println("Response message sent")
 }
