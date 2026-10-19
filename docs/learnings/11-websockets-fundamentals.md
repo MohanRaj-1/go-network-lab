@@ -270,3 +270,67 @@ The current client retains the graceful-close experiment as commented code and e
 ### Evidence and Limitations
 
 These notes record the supplied log outcomes and Wireshark observations, alongside inspection of the final client and server code. The experiments used a local, unencrypted `ws://` connection and the `github.com/coder/websocket` library. The results demonstrate the two shutdown paths in this test environment. They do not evaluate network failures under load, reconnect behavior, or all possible TCP teardown sequences. The abrupt-close capture showed no WebSocket Close frame in the displayed traffic; TCP FIN/RST behavior should be documented separately if inspected.
+
+## Day 5 — Concurrent WebSocket Clients
+
+### Objective
+
+Verify that a Go WebSocket server can handle multiple independent client connections, and investigate how synchronization coordinates when concurrent clients begin application messaging.
+
+### Implementation
+
+- Created `websocket/handshake/concurrent_client/main.go` to launch three client goroutines.
+- Each client established an independent WebSocket connection to the server's `/ws` endpoint.
+- Each client sent a unique text message, read its echo response, and initiated graceful closure.
+- Added a buffered `ready` channel to signal successful connection establishment.
+- Added a `start` channel as a synchronization barrier. Each client waited on this channel before sending its application message.
+- The main goroutine waited for all three readiness signals, closed `start` to release the clients, and waited for all clients to finish.
+
+### Observations
+
+All three clients connected and reached the synchronization barrier. The main goroutine logged that all clients were ready before releasing them.
+
+Each client received the expected response:
+
+| Client | Message               | Result                               |
+| ------ | --------------------- | ------------------------------------ |
+| 1      | `Hello from client 1` | Received `Echo: Hello from client 1` |
+| 2      | `Hello from client 2` | Received `Echo: Hello from client 2` |
+| 3      | `Hello from client 3` | Received `Echo: Hello from client 3` |
+
+The server logged three successful WebSocket handshakes, processed all three messages, and reported normal close status `1000` for each connection. All clients logged successful graceful closure, followed by the main goroutine logging `all clients finished`.
+
+The order of client readiness, message handling, responses, and closure varied between runs. This is expected because the goroutines are scheduled independently.
+
+### Wireshark Observations
+
+I inspected the individual TCP streams in Wireshark using the Follow TCP Stream feature.
+
+The inspected streams—3, 4, and 5—each showed an HTTP Upgrade request, a `101 Switching Protocols` response, a WebSocket text-message exchange, and a connection-close exchange.
+
+The streams represented three separate TCP connections to the same server endpoint. Each connection carried its own WebSocket handshake and application messages.
+
+### Synchronization and Concurrency
+
+The `ready` channel allowed the main goroutine to wait until all three clients had established their connections. Closing `start` released all clients waiting at the barrier.
+
+This experiment established that all three clients reached the readiness point before application messaging began. It also demonstrated successful message exchanges and graceful closure across three independent connections.
+
+The experiment does not prove that all client writes or server handlers executed at exactly the same instant, and it does not measure throughput or scalability under load.
+
+### Key Learnings
+
+1. A Go HTTP server can handle multiple independent WebSocket connections.
+2. Each connection maintains its own WebSocket communication and lifecycle.
+3. Goroutines can be coordinated with channels to control when application work begins.
+4. Closing a channel broadcasts a release to all goroutines waiting to receive from it.
+5. Concurrent tasks are not guaranteed to execute in a particular order.
+6. Application logs and TCP-stream inspection provide complementary evidence of connection handling and protocol behavior.
+
+### Evidence and Limitations
+
+I verified the experiment using client output, server logs, and Wireshark TCP-stream inspection.
+
+The experiment used three local clients, the Go `net/http` server, and `github.com/coder/websocket` over an unencrypted `ws://` connection.
+
+It did not evaluate large client counts, throughput, resource limits, slow-client behavior, or production scalability. The synchronization barrier established a common release point but did not guarantee simultaneous execution.
