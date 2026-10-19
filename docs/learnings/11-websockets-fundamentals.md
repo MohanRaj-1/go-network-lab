@@ -229,3 +229,44 @@ A new Windows loopback capture, inspected with Wireshark's TShark, confirmed:
 Both frames had FIN true and a one-byte payload.
 
 The missing active reader was consistent with the observed failure and the documented reader requirement. Adding a background reader resolved the timeout in this test; the successful rerun alone does not prove that it was the only possible cause. The updated run verified both the wire exchange and API completion, without establishing simultaneous application messaging.
+
+## Day 4 — Connection Lifecycle and Failure Handling
+
+### Objective
+
+Compare graceful WebSocket closure with abrupt connection termination using client and server logs and Wireshark packet captures.
+
+### Experiment A — Graceful Closure
+
+After completing four text-message exchanges and a successful ping/pong exchange, the client called `conn.Close(websocket.StatusNormalClosure, "client done")`. The background reader started by `conn.CloseRead(ctx)` remained active to process control frames.
+
+The client logged `WebSocket close completed`. The server's next read returned with close status `1000`, and the server logged `WebSocket closed normally: status=1000`.
+
+The supplied Wireshark observations showed a client-to-server WebSocket Close frame (opcode 8, masked) followed by a server-to-client Close frame (opcode 8, unmasked). Both frames had a 13-byte WebSocket payload, consistent with the two-byte close status and the 11-byte reason `client done`.
+
+These observations support successful completion of the WebSocket close handshake.
+
+### Experiment B — Abrupt Closure
+
+The client completed the same four text-message exchanges and ping/pong exchange, then called `conn.CloseNow()`.
+
+The client logged `Closing WebSocket abruptly`. The server's next read returned an error containing EOF, and `websocket.CloseStatus(err)` returned `-1`. The server's error-handling branch logged this status and the read error.
+
+The supplied Wireshark capture showed the text exchanges and ping/pong but no WebSocket Close frame before the displayed WebSocket traffic ended.
+
+This behavior is consistent with the client terminating the connection without performing a WebSocket close handshake.
+
+The current client retains the graceful-close experiment as commented code and enables the abrupt-close path. Both versions retain deferred `conn.CloseNow()` cleanup. The server distinguishes normal close status `1000` from other read errors using `websocket.CloseStatus(err)`.
+
+### Key Learnings
+
+1. Completing application messages does not automatically mean the WebSocket connection has been gracefully closed.
+2. A graceful close uses WebSocket Close control frames; the client and server can exchange these frames before the underlying connection is terminated.
+3. `conn.Close(...)` and `conn.CloseNow()` have different purposes: the former initiates protocol-level closure, while the latter terminates the connection immediately.
+4. A normal close status of `1000` indicates normal closure.
+5. A close status of `-1` from `websocket.CloseStatus(err)` does not represent a close code sent by the peer; the error may instead reflect transport termination without a WebSocket Close frame.
+6. Application logs and packet captures provide complementary evidence. Logs reveal API and handler outcomes, while packet captures reveal the frames observed on the wire.
+
+### Evidence and Limitations
+
+These notes record the supplied log outcomes and Wireshark observations, alongside inspection of the final client and server code. The experiments used a local, unencrypted `ws://` connection and the `github.com/coder/websocket` library. The results demonstrate the two shutdown paths in this test environment. They do not evaluate network failures under load, reconnect behavior, or all possible TCP teardown sequences. The abrupt-close capture showed no WebSocket Close frame in the displayed traffic; TCP FIN/RST behavior should be documented separately if inspected.

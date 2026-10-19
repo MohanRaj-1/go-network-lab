@@ -72,4 +72,23 @@ func main() {
 
 	fmt.Println("WebSocket ping/pong completed successfully")
 
+	//Graceful closure
+	/*log.Println("Initiating graceful WebSocket close")
+
+	if err := conn.Close(
+		websocket.StatusNormalClosure,
+		"client done",
+	); err != nil {
+		log.Printf("WebSocket close failed: %v", err)
+		return
+	}
+
+	log.Println("WebSocket close completed")*/
+
+	//abrupt closure
+	log.Println("Closing WebSocket abruptly")
+	if err := conn.CloseNow(); err != nil {
+		log.Printf("Abrupt close returned an error: %v", err)
+	}
+
 }

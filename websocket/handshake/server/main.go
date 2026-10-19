@@ -43,7 +43,21 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	for {
 		messageType, message, err := conn.Read(r.Context())
 		if err != nil {
-			log.Printf("WebSocket read ended: %v", err)
+			status := websocket.CloseStatus(err)
+
+			if status == websocket.StatusNormalClosure {
+				log.Printf(
+					"WebSocket closed normally: status=%d",
+					status,
+				)
+			} else {
+				log.Printf(
+					"WebSocket read ended: close_status=%d err=%v",
+					status,
+					err,
+				)
+			}
+
 			return
 		}
 
