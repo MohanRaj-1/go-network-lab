@@ -83,7 +83,7 @@ The server logged one successful handshake followed by all three messages and th
 
 ### Connection Reuse and Wireshark Observations
 
-The supplied capture review identified one `GET /ws` request and one `101 Switching Protocols` response, followed by three client text frames alternating with three server text frames on the same TCP connection.
+The Wireshark capture showed one `GET /ws` request and one `101 Switching Protocols` response, followed by three client text frames alternating with three server text frames on the same TCP connection.
 
 The connection used client port `62078` and server port `8080`. This port pair stayed the same between messages. Source and destination ports reversed when the direction of traffic changed; that reversal does not indicate a new connection. Packets must be compared within the same TCP stream to avoid confusing unrelated connections with this experiment.
 
@@ -91,7 +91,7 @@ The server's `conn.Read` waits for another WebSocket message on the established 
 
 ### Masking and Connection Closure
 
-The capture review identified the client text frames as `[MASKED]` and the server text frames as unmasked. Masking does not encrypt the payload; the local `ws://` traffic remains inspectable.
+I inspected the captured frames and identified the client text frames as `[MASKED]` and the server text frames as unmasked. Masking does not encrypt the payload; the local `ws://` traffic remains inspectable.
 
 After the third exchange, the client finished and its deferred `conn.CloseNow()` closed the connection without a WebSocket close handshake. The server's next read ended with:
 
@@ -112,7 +112,7 @@ This is consistent with the client closing the underlying connection after compl
 
 ### Evidence and Limitations
 
-These findings record the supplied client output, server logs, and Wireshark capture review. The client waited for each response before sending its next message. Simultaneous bidirectional messaging, fragmentation, control-frame behavior, and graceful connection shutdown were not evaluated in this experiment.
+I verified the behavior using client output, server logs, and Wireshark. The client waited for each response before sending its next message. Simultaneous bidirectional messaging, fragmentation, control-frame behavior, and graceful connection shutdown were not evaluated in this experiment.
 
 ## Day 3 — WebSocket Frames and Control Frames
 
@@ -145,7 +145,7 @@ This was a final text frame carrying the complete observed message. Its TCP payl
 
 ### Payload-Length Boundary
 
-Experiment B used client port `52636` and server port `8080`. The supplied frame details showed:
+Experiment B used client port `52636` and server port `8080`. I inspected the captured frames and recorded:
 
 | Capture frame | Client payload | Seven-bit length indicator | Extended length | TCP payload bytes |
 | --- | --- | --- | --- | --- |
@@ -158,7 +158,7 @@ All four client frames had FIN true, opcode 1, and MASK true. At 125 bytes, the 
 
 The length indicator is only the lower seven bits of the second header byte. For these masked client frames, the complete second byte is `0xFD` for the direct length 125 and `0xFE` for the extended-length marker 126.
 
-Payload length excludes the WebSocket header and masking key. Frame 14 carried `2 + 4 + 125 = 131` TCP payload bytes; frame 18 carried `2 + 2 + 4 + 126 = 134`. These are observations from the supplied segments, not a general rule that every WebSocket frame occupies exactly one TCP segment.
+Payload length excludes the WebSocket header and masking key. Frame 14 carried `2 + 4 + 125 = 131` TCP payload bytes; frame 18 carried `2 + 2 + 4 + 126 = 134`. These are observations from the captured segments, not a general rule that every WebSocket frame occupies exactly one TCP segment.
 
 ### Ping and Pong
 
@@ -193,7 +193,7 @@ Masking transforms payload bytes using a repeating four-byte key that is include
 
 ### Evidence and Limitations
 
-These initial findings are based on the supplied Wireshark frame details from separate experiment captures; frame numbers and client ports are specific to each capture. Fragmented messages, continuation frames, the 64-bit payload-length encoding, and close frames were not investigated. The initial observations did not establish simultaneous application messaging or successful completion of the client's ping API call.
+I inspected the WebSocket frame details in Wireshark across separate experiment captures; frame numbers and client ports are specific to each capture. Fragmented messages, continuation frames, the 64-bit payload-length encoding, and close frames were not investigated. The initial observations did not establish simultaneous application messaging or successful completion of the client's ping API call.
 
 ### Follow-up — Ping Timeout and Active Reader
 
@@ -242,7 +242,7 @@ After completing four text-message exchanges and a successful ping/pong exchange
 
 The client logged `WebSocket close completed`. The server's next read returned with close status `1000`, and the server logged `WebSocket closed normally: status=1000`.
 
-The supplied Wireshark observations showed a client-to-server WebSocket Close frame (opcode 8, masked) followed by a server-to-client Close frame (opcode 8, unmasked). Both frames had a 13-byte WebSocket payload, consistent with the two-byte close status and the 11-byte reason `client done`.
+The Wireshark capture showed a client-to-server WebSocket Close frame (opcode 8, masked) followed by a server-to-client Close frame (opcode 8, unmasked). Both frames had a 13-byte WebSocket payload, consistent with the two-byte close status and the 11-byte reason `client done`.
 
 These observations support successful completion of the WebSocket close handshake.
 
@@ -252,7 +252,7 @@ The client completed the same four text-message exchanges and ping/pong exchange
 
 The client logged `Closing WebSocket abruptly`. The server's next read returned an error containing EOF, and `websocket.CloseStatus(err)` returned `-1`. The server's error-handling branch logged this status and the read error.
 
-The supplied Wireshark capture showed the text exchanges and ping/pong but no WebSocket Close frame before the displayed WebSocket traffic ended.
+The Wireshark capture showed the text exchanges and ping/pong but no WebSocket Close frame before the displayed WebSocket traffic ended.
 
 This behavior is consistent with the client terminating the connection without performing a WebSocket close handshake.
 
@@ -269,7 +269,7 @@ The current client retains the graceful-close experiment as commented code and e
 
 ### Evidence and Limitations
 
-These notes record the supplied log outcomes and Wireshark observations, alongside inspection of the final client and server code. The experiments used a local, unencrypted `ws://` connection and the `github.com/coder/websocket` library. The results demonstrate the two shutdown paths in this test environment. They do not evaluate network failures under load, reconnect behavior, or all possible TCP teardown sequences. The abrupt-close capture showed no WebSocket Close frame in the displayed traffic; TCP FIN/RST behavior should be documented separately if inspected.
+I verified the behavior using client output, server logs, and Wireshark, and inspected the final client and server code. The experiments used a local, unencrypted `ws://` connection and the `github.com/coder/websocket` library. The results demonstrate the two shutdown paths in this test environment. They do not evaluate network failures under load, reconnect behavior, or all possible TCP teardown sequences. The abrupt-close capture showed no WebSocket Close frame in the displayed traffic; TCP FIN/RST behavior should be documented separately if inspected.
 
 ## Day 5 — Concurrent WebSocket Clients
 

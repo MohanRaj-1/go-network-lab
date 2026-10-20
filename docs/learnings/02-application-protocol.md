@@ -47,6 +47,8 @@ Requests use the following fields:
 
 The server checks that an ID is positive but does not enforce uniqueness. Requests on a connection are processed sequentially.
 
+The ID is copied into the response for correlation; this implementation does not use it to enforce uniqueness or support out-of-order responses.
+
 ### 3.2 Response Format
 
 | Field     | JSON type | Purpose                                                              |
@@ -268,6 +270,8 @@ For a protocol error that can be represented as an `ERROR` response, the server 
 
 For errors that prevent the server from interpreting the request, such as malformed JSON, the connection is closed without an application-level error response.
 
+An incomplete frame or a read timeout is a framing or transport failure, rather than a protocol validation error. The handler logs the read error and closes the connection without an `ERROR` response. A failed response write is also logged and ends the handler; it does not produce another application-level response.
+
 ## 5. Experiments
 
 I used a TCP client and server to verify the behavior of the protocol under both valid and invalid requests.
@@ -371,7 +375,7 @@ The server returned:
   "version": 1,
   "id": 4,
   "type": "ERROR",
-  "message": "unknown request type "HELLO""
+  "message": "unknown request type \"HELLO\""
 }
 ```
 
@@ -387,7 +391,7 @@ I deliberately sent a frame containing incomplete JSON:
 {"version":1,"id":1,"type":"PING"
 ```
 
-The frame itself was valid, but the JSON payload was malformed.
+The frame's length prefix and complete payload could be read successfully, but the payload was not valid JSON. Successful framing did not make it a valid application message.
 
 The server failed while decoding the message:
 
@@ -434,6 +438,8 @@ go test -v -count=1 ./...
 ```
 
 All tests passed.
+
+This result applies to that test run and the cases covered by the suite; it does not establish correctness for every possible input or network failure.
 
 ## 6. What I Learned
 

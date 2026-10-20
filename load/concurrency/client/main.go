@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -51,13 +52,7 @@ func main() {
 				return
 			}
 			for time.Now().Before(deadline) {
-				requestStart := time.Now()
-				_, err := conn.Write([]byte("WORK\n"))
-				var response string
-				if err == nil {
-					response, err = reader.ReadString('\n')
-				}
-				responseTime := time.Now()
+				response, responseTime, latency, err := timedRequest(conn, reader)
 				if err != nil {
 					// The shared experiment cutoff is not a request failure.
 					if timeout, ok := err.(net.Error); ok && timeout.Timeout() && !responseTime.Before(deadline) {
@@ -80,7 +75,7 @@ func main() {
 					return
 				}
 				result.Completed++
-				result.Latencies = append(result.Latencies, responseTime.Sub(requestStart))
+				result.Latencies = append(result.Latencies, latency)
 			}
 		}()
 	}
@@ -110,6 +105,37 @@ func main() {
 	}
 	min, avg, p50, p95 := latencyStats(total.Latencies)
 	fmt.Printf("  min: %s\n  avg: %s\n  p50: %s\n  p95: %s\n", min, avg, p50, p95)
+	var zeroSamples, negativeSamples int
+	var smallestPositive time.Duration
+	for _, sample := range total.Latencies {
+		switch {
+		case sample == 0:
+			zeroSamples++
+		case sample < 0:
+			negativeSamples++
+		case smallestPositive == 0 || sample < smallestPositive:
+			smallestPositive = sample
+		}
+	}
+	fmt.Printf("\nTiming diagnostics:\n  samples: %d\n  zero samples: %d\n  negative samples: %d\n", len(total.Latencies), zeroSamples, negativeSamples)
+	if smallestPositive > 0 {
+		fmt.Printf("  smallest positive: %s\n", smallestPositive)
+	} else {
+		fmt.Println("  smallest positive: N/A")
+	}
+	fmt.Printf("  environment: %s %s/%s GOMAXPROCS=%d\n", runtime.Version(), runtime.GOOS, runtime.GOARCH, runtime.GOMAXPROCS(0))
+}
+
+// timedRequest measures the write/read exchange. The caller records the duration
+// only after validating the response and checking the experiment cutoff.
+func timedRequest(conn net.Conn, reader *bufio.Reader) (response string, completedAt time.Time, latency time.Duration, err error) {
+	startedAt := time.Now()
+	_, err = conn.Write([]byte("WORK\n"))
+	if err == nil {
+		response, err = reader.ReadString('\n')
+	}
+	completedAt = time.Now()
+	return response, completedAt, completedAt.Sub(startedAt), err
 }
 
 func latencyStats(latencies []time.Duration) (min, avg, p50, p95 time.Duration) {

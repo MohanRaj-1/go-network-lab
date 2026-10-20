@@ -211,6 +211,8 @@ The client recreates the key-log file each run. Preserve the matching file
 when retaining a capture for later inspection. It contains secrets that allow
 decryption of the corresponding traffic; keep it out of Git.
 
+The repository ignores `go-network-lab-tls-keys.log`, including copies under subdirectories, as well as `tls-keys.log` and `*.keys.log`. I checked the tracked files and available Git history for these key-log filenames and found no matches. Ignore rules do not remove previously committed secrets from history.
+
 The observations below were recorded during Wireshark inspection. Packet numbers
 refer to that capture and will differ in another run.
 
@@ -486,7 +488,7 @@ This is an important distinction: stream-level flow control can constrain one st
 
 The example assumes that Stream 3 has sufficient credit and that no other constraint prevents transmission.
 
-### What Our Experiment Established
+### What My Experiment Established
 
 The Day 3 slow-reader experiment transferred a 4 MiB response over HTTP/2 while the client deliberately delayed application-level reads.
 
@@ -518,7 +520,7 @@ A controlled experiment that deliberately exhausts a flow-control window would b
 
 I learned to reason about HTTP/2 flow control as two independent but jointly enforced limits. A stream needs both stream-level and connection-level credit to send DATA, and replenishing one window does not replenish the other.
 
-I also learned to distinguish a protocol mechanism from evidence of that mechanism becoming a bottleneck. Our capture confirmed that both windows were updated, but it did not demonstrate flow-control exhaustion. That distinction matters when drawing conclusions from packet captures.
+I also learned to distinguish a protocol mechanism from evidence of that mechanism becoming a bottleneck. My capture confirmed that both windows were updated, but it did not demonstrate flow-control exhaustion. That distinction matters when drawing conclusions from packet captures.
 
 ---
 

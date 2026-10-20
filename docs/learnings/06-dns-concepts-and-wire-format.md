@@ -2,7 +2,7 @@
 
 This document records what I learned by building a DNS client in Go, inspecting real response bytes, and turning those bytes into questions, records, and usable IP addresses.
 
-> DNS is a protocol. The bytes on the wire are the source of truth; our Go structures and functions are interpretations of those bytes.
+> DNS is a protocol. The bytes on the wire are the source of truth; my Go structures and functions are interpretations of those bytes.
 
 ## 1. Why DNS Exists
 
@@ -51,7 +51,7 @@ The `www` label identifies a name beneath `example.com`. It is commonly used for
 
 ### Resolving the Name
 
-Our client asks a recursive resolver, such as `1.1.1.1`, for the address information. The resolver obtains the answer on the client's behalf. If it already has a usable cached answer, it can respond without walking the hierarchy again.
+My client asks a recursive resolver, such as `1.1.1.1`, for the address information. The resolver obtains the answer on the client's behalf. If it already has a usable cached answer, it can respond without walking the hierarchy again.
 
 When the necessary information is not cached, the conceptual process is:
 
@@ -74,13 +74,13 @@ The resolver makes these requests; the root server does not forward the client's
 
 The distinction between the two server roles is important: a **recursive resolver finds or obtains an answer for the client**, while an **authoritative server serves the authoritative records for its zone**. A resolver's cached copy does not make it authoritative for that zone.
 
-In this lab, our Go client sends its question to a recursive resolver. It does not contact the root and TLD servers itself or implement the referral-following process. The packets we captured show the exchange between our client and the resolver, not every lookup the resolver may have performed behind it.
+In this lab, my Go client sends its question to a recursive resolver. It does not contact the root and TLD servers itself or implement the referral-following process. The packets I captured show the exchange between my client and the resolver, not every lookup the resolver may have performed behind it.
 
 ## 3. Caching and TTL
 
 When I queried `example.com` more than once, the address records could stay the same while their TTL values changed. One response showed a TTL of `247`; a later response showed `125`. Understanding those numbers requires separating the information in a record from what the resolver does with it.
 
-TTL means **Time To Live**. In a DNS resource record, it is a value measured in seconds that tells a cache how long the record may be reused before it needs fresh information. It is not a timeout for our lookup, and it does not describe how long the destination server or IP address will exist.
+TTL means **Time To Live**. In a DNS resource record, it is a value measured in seconds that tells a cache how long the record may be reused before it needs fresh information. It is not a timeout for my lookup, and it does not describe how long the destination server or IP address will exist.
 
 > TTL is a property supplied with the DNS record; caching is behavior performed by a resolver or cache.
 
@@ -96,7 +96,7 @@ Time spent in the cache:         122 more seconds
 Remaining TTL in a later answer: 125 seconds
 ```
 
-This illustrates how the observed decrease could occur if both responses came from the same cache entry without a refresh. The two values alone do not prove that exactly 122 seconds passed between our queries: responses can come from different cache instances, and a resolver may refresh an entry between requests.
+This illustrates how the observed decrease could occur if both responses came from the same cache entry without a refresh. The two values alone do not prove that exactly 122 seconds passed between my queries: responses can come from different cache instances, and a resolver may refresh an entry between requests.
 
 ### When the TTL Expires
 
@@ -104,13 +104,13 @@ Under ordinary TTL-based caching, an expired entry can no longer be treated as a
 
 Expiry does not mean the domain has disappeared or an existing connection must close. It means the cached DNS information has reached its reuse limit. Some resolvers have explicit policies for serving stale answers during failures; that is separate from the basic TTL behavior studied here.
 
-### What Our Client Does
+### What My Client Does
 
-Our `decodeResourceRecord` function reads the four TTL bytes in big-endian order and stores the result in `ResourceRecord.TTL`. For example, `00 00 00 7d` becomes `125` seconds. Parsing this field does not create a cache or start an expiry timer.
+My `decodeResourceRecord` function reads the four TTL bytes in big-endian order and stores the result in `ResourceRecord.TTL`. For example, `00 00 00 7d` becomes `125` seconds. Parsing this field does not create a cache or start an expiry timer.
 
 The current `LookupA` implementation makes a new query to the configured resolver for every call. It does not retain records between lookups, record insertion times, or check expiry times. `ExtractARecords` returns only the matching IP addresses, so the public lookup result does not include their TTLs.
 
-Caching was deliberately left outside this milestone so I could focus on wire encoding, parsing, response validation, transport framing, and cancellation. The recursive resolver we contact can still answer from its own cache, which explains why we can observe decreasing TTLs even though our Go client has no cache of its own.
+Caching was deliberately left outside this milestone so I could focus on wire encoding, parsing, response validation, transport framing, and cancellation. The recursive resolver I contact can still answer from its own cache, which explains why I can observe decreasing TTLs even though my Go client has no cache of its own.
 
 ## 4. DNS Transport — UDP and TCP
 
@@ -118,11 +118,11 @@ DNS commonly uses UDP port 53 for ordinary queries. In this lab, the client star
 
 ### UDP Carries Datagrams
 
-UDP preserves datagram boundaries, but it does not guarantee delivery, ordering, or protection against duplicate delivery. Sending a query successfully does not guarantee that the resolver receives it or that its response reaches our client.
+UDP preserves datagram boundaries, but it does not guarantee delivery, ordering, or protection against duplicate delivery. Sending a query successfully does not guarantee that the resolver receives it or that its response reaches my client.
 
-Our receive buffer holds one response datagram at a time. Before decoding a packet, `LookupA` checks whether it contains a transaction ID matching the query. Unrelated packets are ignored while the original lookup deadline continues to run.
+My receive buffer holds one response datagram at a time. Before decoding a packet, `LookupA` checks whether it contains a transaction ID matching the query. Unrelated packets are ignored while the original lookup deadline continues to run.
 
-A timeout is necessary because a response might never arrive. Our lookup has an overall three-second limit, or an earlier deadline supplied by the caller. Context cancellation can also stop it before that deadline. The current client does not automatically resend a UDP query when it times out.
+A timeout is necessary because a response might never arrive. My lookup has an overall three-second limit, or an earlier deadline supplied by the caller. Context cancellation can also stop it before that deadline. The current client does not automatically resend a UDP query when it times out.
 
 ### TCP Carries a Byte Stream
 
@@ -142,7 +142,7 @@ Those bytes might arrive in reads of 8, 13, 4, and 36 bytes. A read can end half
 
 ### Truncation and TCP Fallback
 
-The DNS header's `TC` flag indicates that the response is truncated. Our client treats a validated UDP response with `TC=1` as a reason to repeat the query over TCP, rather than using its answer section as the final lookup result.
+The DNS header's `TC` flag indicates that the response is truncated. My client treats a validated UDP response with `TC=1` as a reason to repeat the query over TCP, rather than using its answer section as the final lookup result.
 
 ```text
 Encoded DNS query
@@ -156,7 +156,7 @@ Encoded DNS query
 
 `LookupA` passes the original encoded query to `exchangeTCP`. It does not generate another transaction ID or re-encode the question. TCP adds transport framing around the same DNS message. Both exchanges share the original context and deadline, so fallback does not receive a new three-second budget.
 
-The TCP response is decoded and validated again before RCODE handling and address extraction. If it still has `TC` set, our client returns an error rather than repeatedly opening TCP connections. One current limitation is that the UDP message must pass full decoding before the TC check; an incomplete declared record therefore produces a decoder error before fallback can occur.
+The TCP response is decoded and validated again before RCODE handling and address extraction. If it still has `TC` set, my client returns an error rather than repeatedly opening TCP connections. One current limitation is that the UDP message must pass full decoding before the TC check; an incomplete declared record therefore produces a decoder error before fallback can occur.
 
 ### A Timeout Is Not a DNS Error Response
 
@@ -164,7 +164,7 @@ A UDP timeout means that the client did not obtain an acceptable response before
 
 A nonzero RCODE is different: the client received and validated a DNS response, and the server reported a DNS-level result such as `NXDOMAIN`, `SERVFAIL`, or `REFUSED`.
 
-| Outcome | What the client knows | How our code reports it |
+| Outcome | What the client knows | How my code reports it |
 | --- | --- | --- |
 | Lookup deadline expires | No acceptable result arrived within the time budget | An error matching `context.DeadlineExceeded` |
 | Valid response with nonzero RCODE | The server explicitly reported a DNS-level error | `DNSResponseError` preserving the numeric code |
@@ -174,7 +174,7 @@ Keeping these outcomes separate lets callers distinguish a transport or timing p
 
 ## 5. DNS Message Wire Format
 
-The most useful way to understand our decoder is to follow the actual bytes it reads. This captured response is 61 bytes long:
+The most useful way to understand my decoder is to follow the actual bytes it reads. This captured response is 61 bytes long:
 
 ```text
 12 34 81 80 00 01 00 02 00 00 00 00
@@ -200,7 +200,7 @@ Additional   ARCOUNT resource records
 
 Only the header has a fixed overall size. Questions and resource records contain variable-length fields, so the decoder must read their contents to find where the next item begins. Answers, authority, and additional all use the resource-record layout.
 
-In our capture, the counts specify one question, two answers, and no authority or additional records. Our `Message` struct represents those sections after decoding; the counts and field encodings in the packet determine how we populate it.
+In my capture, the counts specify one question, two answers, and no authority or additional records. My `Message` struct represents those sections after decoding; the counts and field encodings in the packet determine how I populate it.
 
 ### The 12-Byte Header
 
@@ -217,7 +217,7 @@ Each header field occupies two bytes:
 
 `decodeHeader` reads these values with `binary.BigEndian.Uint16`. The ID lets the client correlate the response with its query. It is not an address or a record count.
 
-Our flag helpers interpret the following parts of the flags word:
+My flag helpers interpret the following parts of the flags word:
 
 | Field | Mask | Meaning | Value in `0x8180` |
 | --- | --- | --- | --- |
@@ -227,7 +227,7 @@ Our flag helpers interpret the following parts of the flags word:
 | TC | `0x0200` | Message truncated | Clear |
 | RCODE | `0x000f` | Response code in the low four bits | `0`, NOERROR |
 
-RCODE is a four-bit value, not a single boolean flag. The decoder preserves the full flags word, but our client only interprets the fields needed for this experiment. Parsing a response code and deciding what it means for a lookup remain separate operations.
+RCODE is a four-bit value, not a single boolean flag. The decoder preserves the full flags word, but my client only interprets the fields needed for this experiment. Parsing a response code and deciding what it means for a lookup remain separate operations.
 
 ### The Question
 
@@ -274,7 +274,7 @@ In hexadecimal:
 
 The encoded name occupies `1 + 7 + 1 + 3 + 1 = 13` bytes. The dots in the decoded string are added when the decoder joins the labels. A trailing dot in a textual name represents the root; it does not become a literal dot byte in this encoding.
 
-For this milestone, our name decoder handles ordinary length-prefixed labels and compression pointers. It checks message bounds, rejects other label prefixes, and enforces the 63-byte label and 255-byte expanded wire-name limits. This is the supported scope of our implementation, not a claim to handle every DNS name representation.
+For this milestone, my name decoder handles ordinary length-prefixed labels and compression pointers. It checks message bounds, rejects other label prefixes, and enforces the 63-byte label and 255-byte expanded wire-name limits. This is the supported scope of my implementation, not a claim to handle every DNS name representation.
 
 ### Resource Records
 
@@ -304,7 +304,7 @@ The first answer starts at offset `29`:
 
 The second answer occupies offsets `45–60`. It has the same name, type, class, TTL, and RDLENGTH, but its RDATA is `ac 42 93 f3`, representing `172.66.147.243`.
 
-The wire format can also carry records such as CNAME. Our generic decoder preserves their raw RDATA, but the current client does not follow CNAME chains.
+The wire format can also carry records such as CNAME. My generic decoder preserves their raw RDATA, but the current client does not follow CNAME chains.
 
 ### Name Compression: `c0 0c`
 
@@ -336,7 +336,7 @@ Pointer begins at 29
     +-- Return nextOffset 31, after the two pointer bytes
 ```
 
-Returning `25`, the position after the original question name, would make the caller read the wrong fields. Our `decodeName` saves the position after the first pointer and keeps it even if more pointers are followed. A limit of 16 pointer jumps prevents cyclic pointer chains from hanging the decoder.
+Returning `25`, the position after the original question name, would make the caller read the wrong fields. My `decodeName` saves the position after the first pointer and keeps it even if more pointers are followed. A limit of 16 pointer jumps prevents cyclic pointer chains from hanging the decoder.
 
 ### Walking the Complete Packet
 
@@ -356,9 +356,9 @@ The final offset is `61`, equal to the captured message length. This is how the 
 
 ## 6. Response Validation
 
-Successfully decoding bytes does not mean the response belongs to our query. `DecodeMessage` reads the declared sections and checks their structure within the formats we support. It has no knowledge of the transaction ID or question our client sent. That comparison belongs to `ValidateResponse`.
+Successfully decoding bytes does not mean the response belongs to my query. `DecodeMessage` reads the declared sections and checks their structure within the formats I support. It has no knowledge of the transaction ID or question my client sent. That comparison belongs to `ValidateResponse`.
 
-For our single-question lookup, validation follows this sequence and returns an error at the first failed check:
+For my single-question lookup, validation follows this sequence and returns an error at the first failed check:
 
 ```text
 Transaction ID matches the sent query
@@ -375,24 +375,24 @@ Question type matches
     |
 Question class matches
     |
-Response matches our query
+Response matches my query
 ```
 
 ### Checking the Relationship to the Query
 
-The transaction ID must match the ID generated for this lookup. For the earlier captured query, that was `0x1234`; the current `LookupA` generates a random 16-bit ID. QR must also be set: a packet containing the same question and ID with `QR=0` is still a query, not the response we expect.
+The transaction ID must match the ID generated for this lookup. For the earlier captured query, that was `0x1234`; the current `LookupA` generates a random 16-bit ID. QR must also be set: a packet containing the same question and ID with `QR=0` is still a query, not the response I expect.
 
-We sent exactly one question, so the response header must declare `QDCount == 1`. We also check `len(message.Questions) == 1` before accessing the question. These normally agree after successful decoding, but `Message` can be constructed manually. The slice-length check makes the validator safe at that boundary and prevents an out-of-range access.
+I sent exactly one question, so the response header must declare `QDCount == 1`. I also check `len(message.Questions) == 1` before accessing the question. These normally agree after successful decoding, but `Message` can be constructed manually. The slice-length check makes the validator safe at that boundary and prevents an out-of-range access.
 
-The returned question must match all three parts of the sent question: name, type, and class. For our lookup, that means `example.com / A / IN`. A response echoing `example.com / AAAA / IN` does not match merely because the name is correct.
+The returned question must match all three parts of the sent question: name, type, and class. For my lookup, that means `example.com / A / IN`. A response echoing `example.com / AAAA / IN` does not match merely because the name is correct.
 
-Name comparison uses ASCII case-insensitive matching and removes one optional trailing dot from each name. That lets `EXAMPLE.COM`, `example.com`, and `example.com.` compare equally. Our helper does not apply general Unicode normalization or silently remove multiple trailing dots. Type and class are compared by their numeric values.
+Name comparison uses ASCII case-insensitive matching and removes one optional trailing dot from each name. That lets `EXAMPLE.COM`, `example.com`, and `example.com.` compare equally. My helper does not apply general Unicode normalization or silently remove multiple trailing dots. Type and class are compared by their numeric values.
 
 ### A Matching ID Is Only the First Check
 
-The first two bytes can match our query even when the rest of the packet is incomplete or unrelated to the question we asked. The ID is a correlation field, not proof that every other field is acceptable.
+The first two bytes can match my query even when the rest of the packet is incomplete or unrelated to the question I asked. The ID is a correlation field, not proof that every other field is acceptable.
 
-| Packet with a matching ID | Where our client handles it |
+| Packet with a matching ID | Where my client handles it |
 | --- | --- |
 | Malformed name or incomplete declared record | `DecodeMessage` returns an error |
 | QR is zero | `ValidateResponse` rejects it |
@@ -404,18 +404,18 @@ In the UDP receive loop, the ID check happens before full decoding so obviously 
 
 ### Why TC and RCODE Are Separate
 
-Neither flag handling nor query matching should be confused with structural decoding. A message can be structurally decodable and match our question while still requiring another client action.
+Neither flag handling nor query matching should be confused with structural decoding. A message can be structurally decodable and match my question while still requiring another client action.
 
-TC describes truncation. It does not by itself mean the response belongs to another query. After decoding and validation, our client checks TC before treating the answers as final or handling RCODE. A validated truncated UDP response causes TCP fallback using the same query; the TCP response is decoded and validated again. As noted earlier, our strict decoder can reject an incomplete UDP record before this TC check is reached.
+TC describes truncation. It does not by itself mean the response belongs to another query. After decoding and validation, my client checks TC before treating the answers as final or handling RCODE. A validated truncated UDP response causes TCP fallback using the same query; the TCP response is decoded and validated again. As noted earlier, my strict decoder can reject an incomplete UDP record before this TC check is reached.
 
 RCODE describes the DNS server's result. For example, an NXDOMAIN response can be correctly encoded and match the query exactly, while reporting that the name does not exist. `ValidateResponse` therefore leaves it accepted as a matching response, and `validateRCode` reports its numeric code through `DNSResponseError`. NOERROR allows the client to proceed to address extraction; it does not guarantee that a matching A record exists.
 
-The boundaries in our implementation are:
+The boundaries in my implementation are:
 
 ```text
-DecodeMessage      Can we decode the declared message structure?
-ValidateResponse   Does this response match the query we sent?
-TC handling        Do we need TCP, or is the TCP response still truncated?
+DecodeMessage      Can I decode the declared message structure?
+ValidateResponse   Does this response match the query I sent?
+TC handling        Do I need TCP, or is the TCP response still truncated?
 validateRCode      Did the server report a DNS-level error?
 ExtractARecords    Which matching answers contain usable IPv4 addresses?
 ```
@@ -424,7 +424,7 @@ ExtractARecords    Which matching answers contain usable IPv4 addresses?
 
 ## 7. A Record Extraction
 
-After decoding and response validation, we have resource records, but the caller of `LookupA` wants IPv4 addresses. `ExtractARecords` performs that final interpretation. It examines `message.Answers` and returns matching addresses as `[]net.IP`.
+After decoding and response validation, I have resource records, but the caller of `LookupA` wants IPv4 addresses. `ExtractARecords` performs that final interpretation. It examines `message.Answers` and returns matching addresses as `[]net.IP`.
 
 ```text
 ResourceRecord in the answer section
@@ -442,9 +442,9 @@ Append the address to the result
 
 `decodeResourceRecord` understands the common record layout: name, type, class, TTL, length, and data. It copies RDATA into a byte slice without interpreting its contents. Different record types give those bytes different meanings, so the generic decoder cannot assume every record contains an IPv4 address.
 
-`ExtractARecords` supplies the interpretation for our A/IN lookup. It does not open sockets, check transaction IDs, decide on TCP fallback, or interpret RCODE. Those steps have already been handled by the lookup pipeline.
+`ExtractARecords` supplies the interpretation for my A/IN lookup. It does not open sockets, check transaction IDs, decide on TCP fallback, or interpret RCODE. Those steps have already been handled by the lookup pipeline.
 
-### Selecting Answers for Our Question
+### Selecting Answers for My Question
 
 The extractor first checks that the supplied question is A/IN. For a different question type or class, it returns an empty result. `LookupA` constructs an A/IN question itself, but the extractor can also be called directly.
 
@@ -453,7 +453,7 @@ For each answer, it checks TYPE, CLASS, and NAME before examining the data lengt
 | Check | Reason |
 | --- | --- |
 | `record.Type == TypeA` | The four-byte IPv4 interpretation applies to A records |
-| `record.Class == ClassIN` | Our lookup requests records in the Internet class |
+| `record.Class == ClassIN` | My lookup requests records in the Internet class |
 | Record name matches the question name | An address for another name is not automatically an answer to this lookup |
 
 The name check uses the same ASCII case-insensitive comparison and optional trailing-dot handling as response validation. Validating the echoed question does not remove the need to check each answer's owner name.
@@ -462,7 +462,7 @@ AAAA and CNAME records are skipped because their type is not A. Records for othe
 
 ### Four Bytes Become an IPv4 Address
 
-An IPv4 address has 32 bits, represented by four eight-bit octets. A matching A/IN record must therefore contain exactly four RDATA bytes. In our captured response:
+An IPv4 address has 32 bits, represented by four eight-bit octets. A matching A/IN record must therefore contain exactly four RDATA bytes. In my captured response:
 
 ```text
 RDATA: 68 14 17 9a
@@ -472,23 +472,23 @@ RDATA: 68 14 17 9a
 Address: 104.20.23.154
 ```
 
-The implementation checks both `record.RDataLen == 4` and `len(record.RData) == 4` before indexing the slice. The first is the length declared by the record; the second is the number of bytes actually available in the Go value. Our decoder normally keeps them consistent, but an exported `ResourceRecord` can be constructed manually.
+The implementation checks both `record.RDataLen == 4` and `len(record.RData) == 4` before indexing the slice. The first is the length declared by the record; the second is the number of bytes actually available in the Go value. My decoder normally keeps them consistent, but an exported `ResourceRecord` can be constructed manually.
 
 `net.IPv4` constructs the address from those four bytes. The returned address does not share the record's RDATA storage, so changing that input slice later does not change the extracted address. The four-byte rule concerns the wire data; it does not require the resulting `net.IP` slice to have length four.
 
 ### Unrelated Records and Malformed Matches
 
-An unrelated record is skipped without applying A-specific length rules. A malformed record that matches our requested name, type, and class is different: it claims to supply an IPv4 answer but cannot be interpreted as one.
+An unrelated record is skipped without applying A-specific length rules. A malformed record that matches my requested name, type, and class is different: it claims to supply an IPv4 answer but cannot be interpreted as one.
 
 For example, a matching A/IN record declaring four bytes but containing only two produces an error. Silently skipping it would hide invalid answer data and could make a broken response look like a successful lookup with fewer addresses.
 
-The extractor follows the same complete-result-or-error convention as our decoder. If it collects one valid address and then encounters a malformed matching record, it returns `nil` and an error, discarding the collected address.
+The extractor follows the same complete-result-or-error convention as my decoder. If it collects one valid address and then encounters a malformed matching record, it returns `nil` and an error, discarding the collected address.
 
 ### No Usable A Records
 
-If there are no answers, or every answer is unrelated to our A/IN question, the extractor returns an empty slice and no error. It does not invent an address, follow aliases, or classify the result as NXDOMAIN.
+If there are no answers, or every answer is unrelated to my A/IN question, the extractor returns an empty slice and no error. It does not invent an address, follow aliases, or classify the result as NXDOMAIN.
 
-This preserves the distinction between a server-reported DNS error, malformed matching address data, and a valid response with no usable IPv4 records. Our command-line client handles the last case by printing `No matching IPv4 addresses found.`
+This preserves the distinction between a server-reported DNS error, malformed matching address data, and a valid response with no usable IPv4 records. My command-line client handles the last case by printing `No matching IPv4 addresses found.`
 
 ## 8. Error Handling and Cancellation
 
@@ -530,9 +530,9 @@ Extract matching A records
 | Response has a nonzero RCODE after TC handling | Return `DNSResponseError` with the numeric code |
 | Matching A/IN answer has invalid RDATA length | Return an extraction error without collected addresses |
 
-Malformed packets include short headers, labels extending beyond the message, invalid or cyclic compression pointers, and sections whose declared entries cannot be fully read. Our decoder applies bounds checks before reading fields and limits pointer traversal. It returns a zero-value `Message` on failure instead of exposing a successfully decoded prefix as a complete response.
+Malformed packets include short headers, labels extending beyond the message, invalid or cyclic compression pointers, and sections whose declared entries cannot be fully read. My decoder applies bounds checks before reading fields and limits pointer traversal. It returns a zero-value `Message` on failure instead of exposing a successfully decoded prefix as a complete response.
 
-The UDP and TCP validation policies differ intentionally. UDP can deliver individual unrelated datagrams while the lookup waits. Our dedicated TCP connection carries one query and expects one response, so a mismatched TCP response ends the exchange with an error.
+The UDP and TCP validation policies differ intentionally. UDP can deliver individual unrelated datagrams while the lookup waits. My dedicated TCP connection carries one query and expects one response, so a mismatched TCP response ends the exchange with an error.
 
 ### One Deadline for the Whole Lookup
 

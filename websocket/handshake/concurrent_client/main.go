@@ -13,8 +13,16 @@ import (
 
 const clientCount = 3
 
+type connectionResult struct {
+	clientID int
+	err      error
+}
+
 func main() {
-	ready := make(chan int, clientCount)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	ready := make(chan connectionResult, clientCount)
 	start := make(chan struct{})
 
 	var wg sync.WaitGroup
@@ -24,14 +32,27 @@ func main() {
 
 		go func(clientID int) {
 			defer wg.Done()
-			runClient(clientID, ready, start)
+			runClient(ctx, clientID, ready, start)
 		}(i)
 	}
 
-	// Wait until every client has established its connection.
+	// Every client reports readiness or a connection error.
 	for i := 0; i < clientCount; i++ {
-		clientID := <-ready
-		log.Printf("[main] client %d is ready", clientID)
+		select {
+		case result := <-ready:
+			if result.err != nil {
+				log.Printf("[main] client %d connection failed; aborting barrier: %v", result.clientID, result.err)
+				cancel()
+				wg.Wait()
+				return
+			}
+			log.Printf("[main] client %d is ready", result.clientID)
+		case <-ctx.Done():
+			log.Printf("[main] barrier aborted: %v", ctx.Err())
+			cancel()
+			wg.Wait()
+			return
+		}
 	}
 
 	log.Println("[main] all clients ready; releasing them together")
@@ -42,45 +63,36 @@ func main() {
 }
 
 func runClient(
+	ctx context.Context,
 	clientID int,
-	ready chan<- int,
+	ready chan<- connectionResult,
 	start <-chan struct{},
 ) {
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		10*time.Second,
-	)
-	defer cancel()
-
 	conn, response, err := websocket.Dial(
 		ctx,
 		"ws://localhost:8080/ws",
 		nil,
 	)
 	if err != nil {
-		log.Printf("[client %d] dial failed: %v", clientID, err)
+		ready <- connectionResult{clientID: clientID, err: fmt.Errorf("dial: %w", err)}
 		return
 	}
 	defer conn.CloseNow()
 
 	if response.StatusCode != http.StatusSwitchingProtocols {
-		log.Printf(
-			"[client %d] unexpected handshake status: %s",
-			clientID,
-			response.Status,
-		)
+		ready <- connectionResult{clientID: clientID, err: fmt.Errorf("unexpected handshake status: %s", response.Status)}
 		return
 	}
 
 	log.Printf("[client %d] connected; waiting at barrier", clientID)
-	ready <- clientID
+	ready <- connectionResult{clientID: clientID}
 
 	// No application message is sent until main closes start.
 	select {
 	case <-start:
 		log.Printf("[client %d] released; sending message", clientID)
 	case <-ctx.Done():
-		log.Printf("[client %d] timed out waiting at barrier", clientID)
+		log.Printf("[client %d] barrier canceled: %v", clientID, ctx.Err())
 		return
 	}
 

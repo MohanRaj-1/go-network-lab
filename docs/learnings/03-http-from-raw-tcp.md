@@ -10,6 +10,8 @@ I started with a server that accepted one connection, printed the raw headers, a
 
 The server listens on `:8083`. It implements a deliberately small HTTP/1.1 subset. The rules described below reflect this experiment, rather than a complete HTTP implementation.
 
+This is an educational parser, not a drop-in replacement for Go's `net/http`. It supports Content-Length and chunked request bodies, persistent connections, and pipelining within the documented subset. Missing connection deadlines, a maximum body size, and a chunk-size-line limit leave it vulnerable to stalled connections and excessive resource use; the header limits alone do not make it suitable for production.
+
 ## 1. HTTP Request Structure
 
 A request contains a request line, header fields, a blank line, and possibly a body.
@@ -145,7 +147,7 @@ strings.Trim(value, " \t")
 
 `strings.TrimSpace` removes a broader set, including some forbidden controls and Unicode whitespace. Using it before validation could turn malformed input into apparently valid input. Internal spaces and tabs are preserved, and arbitrary values are never lowercased.
 
-A subtle example is `Host:: example.com`. Splitting at the first colon gives the valid name `Host` and the value `: example.com`. Name validation alone cannot reject it. Our current Host semantics only check count and nonemptiness, not complete Host-value syntax.
+A subtle example is `Host:: example.com`. Splitting at the first colon gives the valid name `Host` and the value `: example.com`. Name validation alone cannot reject it. My current Host semantics only check count and nonemptiness, not complete Host-value syntax.
 
 ## 5. Repeated Headers
 
@@ -248,7 +250,7 @@ If `he` was buffered, the remaining slice has room for three bytes. ReadFull rea
 
 I do not use `io.ReadAll(conn)` for a request body. On a persistent connection, that would wait for the stream to end rather than stopping at this request's body boundary.
 
-Without either supported framing header, our server treats the request as having an empty body.
+Without either supported framing header, my server treats the request as having an empty body.
 
 ### Transfer-Encoding: chunked
 
@@ -270,11 +272,11 @@ Sizes are hexadecimal: `A` means 10 bytes and `10` means 16 bytes.
 
 `readChunkedBody` repeatedly reads a size line, validates hexadecimal digits, converts the size, reads exactly that many bytes, and validates the following CRLF. It appends only chunk data to the decoded body.
 
-For the zero chunk, it consumes the final blank line and returns. Our subset requires the ending `0\r\n\r\n`; chunk extensions and trailers are not supported.
+For the zero chunk, it consumes the final blank line and returns. My subset requires the ending `0\r\n\r\n`; chunk extensions and trailers are not supported.
 
 The helpers preserve unconsumed buffer bytes, including a request immediately following the final chunk. Incomplete size lines, truncated data, invalid hexadecimal sizes, and incorrect CRLF endings produce errors.
 
-Repeated Transfer-Encoding fields are joined as an ordered coding list. Our server accepts only a single `chunked` coding, ignoring its case. It rejects unsupported lists, repeated chunked coding, and any request combining Transfer-Encoding with Content-Length.
+Repeated Transfer-Encoding fields are joined as an ordered coding list. My server accepts only a single `chunked` coding, ignoring its case. It rejects unsupported lists, repeated chunked coding, and any request combining Transfer-Encoding with Content-Length.
 
 ## 8. Persistent Connections
 
@@ -306,7 +308,7 @@ After reading the POST's five-byte body, the server must preserve the GET. Disca
 
 The next call to `readRequest` searches the existing buffer before reading from TCP. A complete buffered request can therefore be parsed immediately.
 
-Our handler processes requests sequentially within one connection and sends responses in that same order. It does not launch a goroutine for every pipelined request.
+My handler processes requests sequentially within one connection and sends responses in that same order. It does not launch a goroutine for every pipelined request.
 
 ## 10. Fragmented TCP Reads
 
@@ -383,7 +385,7 @@ HTTP/1.1 200 OK\r\nContent-Length: 12\r\nContent-Type: text/plain\r\nConnection:
 
 `Hello World!` is 12 bytes with no trailing newline. The writer calculates Content-Length using `len(body)` and handles partial writes by continuing until all response bytes are sent or an error occurs.
 
-Our routing and error rules are:
+My routing and error rules are:
 
 | Request or condition                   | Response                       |
 | -------------------------------------- | ------------------------------ |
@@ -393,7 +395,7 @@ Our routing and error rules are:
 | Wrong method for `/` or `/echo`        | 405, `Method Not Allowed`      |
 | Unsupported version or invalid request | 400, `Bad Request`, then close |
 
-The target is checked first when routing, so `PUT /unknown` returns 404, while `PUT /` returns 405. These are our chosen subset rules. The current 405 response does not include an Allow header.
+The target is checked first when routing, so `PUT /unknown` returns 404, while `PUT /` returns 405. These are my chosen subset rules. The current 405 response does not include an Allow header.
 
 Even if the request is chunked, the response uses Content-Length because the complete decoded body is already available.
 

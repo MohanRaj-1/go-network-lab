@@ -117,11 +117,11 @@ Validation can include:
 
 ### Local learning certificate
 
-Our local certificate is self-signed and intended for local experimentation.
+My local certificate is self-signed and intended for local experimentation.
 
 It includes localhost and 127.0.0.1 as names or addresses for the experiment.
 
-The certificate is not automatically trusted by every client. Our Go integration test explicitly configures a certificate pool containing the test certificate.
+The certificate is not automatically trusted by every client. My Go integration test explicitly configures a certificate pool containing the test certificate.
 
 This is different from deploying a publicly trusted certificate in a production environment.
 
@@ -213,7 +213,7 @@ A Wireshark frame is not necessarily equivalent to a TLS record or an applicatio
 
 The experiment uses Go's `crypto/tls` package.
 
-We deliberately do not implement the following ourselves:
+I deliberately do not implement the following myself:
 
 - AES
 - RSA
@@ -259,7 +259,7 @@ The observed connection included:
 
 The negotiated values are determined during the handshake and depend on the client and server configuration.
 
-An empty ALPN value is expected in this experiment because we did not configure an application protocol such as HTTP/2 through ALPN.
+An empty ALPN value is expected in this experiment because I did not configure an application protocol such as HTTP/2 through ALPN.
 
 ### Conclusion
 
