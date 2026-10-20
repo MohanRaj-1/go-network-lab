@@ -58,6 +58,12 @@ http2/
     ├── client/   # Shared transport, slow reads, repeated requests, and TLS key logging
     └── server/   # /slow, /fast, and chunked writes for a 4 MiB /large response
 
+websocket/
+└── handshake/        # WebSocket handshake, messaging, frames, and lifecycle experiments
+    ├── client/       # Controlled payload lengths, ping/pong, and closure experiments
+    ├── concurrent_client/ # Three independent clients coordinated with a channel barrier
+    └── server/       # /ws echo endpoint with handshake and close-status logging
+
 docs/
 └── learnings/  # Notes, experiments, and observations
 ```
@@ -206,9 +212,38 @@ The experiments use Go's HTTP/2 implementation rather than a custom protocol sta
 Detailed setup, measurements, capture interpretations, and limitations are in
 [`docs/learnings/10-http2-fundamentals.md`](docs/learnings/10-http2-fundamentals.md).
 
+### Phase 9 — WebSocket Fundamentals
+
+Status: Complete
+
+Implemented and explored:
+
+- Go `net/http` WebSocket server and clients using `github.com/coder/websocket`
+- HTTP Upgrade handshake, `101 Switching Protocols`, and `Sec-WebSocket-Accept` verification
+- Rejection of an ordinary HTTP GET without the required upgrade headers
+- Multiple sequential text-message exchanges over one established connection
+- Wireshark inspection of FIN, opcodes, masking, and the 125/126-byte payload-length boundary
+- Ping/pong control frames and the active-reader requirement for `Conn.Ping`
+- Graceful Close-frame exchanges compared with abrupt termination and EOF
+- Three independent client connections coordinated with `ready` and `start` channels
+- Connection results and a shared deadline to abort the barrier if a client fails to connect
+- Client and server logs checked alongside individual Wireshark TCP streams
+
+Key lessons:
+
+- After the upgrade, messages use WebSocket frames without another HTTP handshake.
+- Client masking does not provide encryption or authentication.
+- Observing a pong on the wire does not establish that the client processed it; adding a background reader resolved the ping timeout in this test.
+- Graceful protocol closure and immediate connection termination produce different frame and error observations.
+- A synchronization barrier provides a common release point; three successful clients do not establish simultaneous execution or production scalability.
+
+The experiments use a local, unencrypted `ws://` connection rather than a custom WebSocket implementation.
+Detailed observations, the ping-timeout investigation, and limitations are in
+[`docs/learnings/11-websockets-fundamentals.md`](docs/learnings/11-websockets-fundamentals.md).
+
 ### Upcoming
 
-Future experiments include WebSockets, gRPC, and service-to-service networking.
+Future experiments include gRPC and service-to-service networking.
 
 ## Running the HTTP/2 Experiments
 
@@ -240,6 +275,32 @@ The client uses a local self-signed certificate for these experiments.
 Certificate verification is disabled in the experimental client; do not use
 this configuration for production traffic.
 
+## Running the WebSocket Experiments
+
+Start the server from the repository root:
+
+```bash
+go run ./websocket/handshake/server
+```
+
+In a second terminal, run one of the clients:
+
+```bash
+# Sequential text exchanges, payload-length inputs, and ping/pong
+go run ./websocket/handshake/client
+
+# Three independent connections coordinated with a synchronization barrier
+go run ./websocket/handshake/concurrent_client
+```
+
+Both clients connect to `ws://localhost:8080/ws`. The sequential client currently
+uses abrupt closure; its graceful-close variant is retained as commented code.
+The concurrent client initiates graceful closure on each connection.
+
+For Wireshark inspection, capture on the Windows loopback interface before
+running a client. Use `tcp.port == 8080` to include the handshake and TCP traffic,
+or `tcp.port == 8080 && websocket` to focus on decoded WebSocket frames.
+
 ## Releases
 
 - `v0.1.0` — Completed TCP, application protocol, raw HTTP, TLS/HTTPS, and DNS experiments.
@@ -249,4 +310,4 @@ this configuration for production traffic.
 
 🚧 In Development
 
-Current milestone: HTTP/2 Fundamentals — Phase 8 Complete
+Current milestone: WebSocket Fundamentals — Phase 9 Complete

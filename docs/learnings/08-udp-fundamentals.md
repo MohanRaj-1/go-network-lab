@@ -353,6 +353,8 @@ Several things could have happened:
 
 The client therefore retried the request using the same request ID.
 
+The implemented policy allows two attempts in total: the initial send and one retry, using the same encoded request and ID. Each attempt has a two-second read deadline. A read error advances to the next attempt; a decoded, validated response ends the loop. After two read failures, the loop ends without a response. Encoding, write, decoding, or response-validation errors terminate the client rather than triggering another retry.
+
 ---
 
 ## 11. Duplicate Requests
@@ -447,6 +449,8 @@ The test also verified that:
 - The cached result is reused.
 - A different client using the same ID is not a duplicate.
 - The same client using a different ID is not a duplicate.
+
+This verifies cached-response reuse within this implementation, not a universal exactly-once execution guarantee. It does not establish behavior across cache expiration, process restarts, concurrent duplicate processing, or distributed servers.
 
 ---
 

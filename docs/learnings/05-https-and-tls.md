@@ -167,6 +167,8 @@ It verifies that the decrypted response contains `HTTP/1.1 200 OK` and `Hello Wo
 
 Both tests wait for the server goroutine to finish, with a two-second timeout. This checks that `Connection: close` is honored and that the handler does not remain blocked after completing the response.
 
+These `net.Pipe` tests exercise the TLS and HTTP handlers together, but not the operating system's TCP stack or a real listening socket. Real-network tests should complement them before drawing conclusions about TCP behavior or deployment readiness.
+
 Run the HTTPS tests from the project root:
 
 ```sh
@@ -193,6 +195,8 @@ defer tlsConn.Close()
 ```
 
 `rawhttp.HandleConnection` also closes the `net.Conn` it owns when its request loop returns. With HTTPS, that interface contains `tlsConn`, so the HTTP handler closes the TLS connection. The surrounding deferred closes ensure cleanup on handshake failures and other early returns as well. Repeated close attempts are harmless for this implementation, though a larger design could assign connection ownership to one layer more explicitly.
+
+I kept this overlapping close responsibility as a deliberate simplification for the lab. A future refactor could give one layer explicit ownership of connection closure to make lifecycle reasoning easier.
 
 Closing the TLS connection attempts to send the TLS closure notification before the underlying TCP connection is released. A peer can still disappear abruptly, so cleanup code must not assume that every connection ends with a graceful TLS shutdown.
 

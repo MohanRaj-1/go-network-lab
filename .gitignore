@@ -19,4 +19,5 @@ tcp/tls/basic/certs/*.key
 
 # TLS debugging secrets
 tls-keys.log
+go-network-lab-tls-keys.log
 *.keys.log

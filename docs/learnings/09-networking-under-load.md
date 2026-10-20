@@ -254,6 +254,28 @@ The implementation also reported minimum latency; the unresolved `0s` readings
 remain a measurement limitation rather than a result used for interpretation.
 CPU readings were manually observed peaks, not averages over the full window.
 
+### Follow-up — Investigating the Zero Minimum
+
+I inspected the request timing and aggregation code after reviewing the `0s` minimum. Timing starts before the request write and ends after the response read. Only validated responses completed before the shared cutoff contribute latency samples. `latencyStats` sorts a copy of those samples and selects the first as the minimum; it does not initialize the reported minimum to zero for a nonempty sample set.
+
+I extracted that same timing path into `timedRequest` without changing its measurement boundaries. Focused tests exercise a completed in-memory request/response exchange, check that its duration is nonnegative and within the enclosing interval, and check aggregation with unsorted positive samples, a single sample, an explicitly recorded zero, and no samples. The aggregation tests also check that the original samples are unchanged. These tests are not a real-network performance measurement.
+
+This inspection did not establish the cause of the historical zero readings. The recorded summary metrics alone cannot distinguish an actual zero-duration timer sample from an issue in the earlier measurement environment. The original anomaly remains open, and I have not corrected or reinterpreted those results. A targeted reproduction should retain raw sample durations, zero-sample counts, and the Go, OS, and hardware details before drawing a conclusion. Little's Law remains an approximate consistency check, not independent validation of the timing implementation.
+
+A subsequent local run with 20 clients reproduced the zero minimum: 38,706 completed requests, zero errors, 20 unfinished requests, throughput 3,870.6 requests/s, average 5.165709 ms, p50 4.8551 ms, and p95 9.0416 ms. The unfinished requests are reported separately at the shared experiment cutoff. This run confirms that the anomaly can recur with the current timing path; it does not identify its cause. I added diagnostic output for sample count, zero and negative sample counts, the smallest positive duration, Go version, OS/architecture, and GOMAXPROCS. Zero samples remain in the statistics rather than being discarded or replaced.
+
+#### Clock Probe
+
+I added a separate probe that repeatedly calls `time.Now()` and subtracts consecutive readings, using the same clock API as the load client:
+
+```sh
+go run ./load/concurrency/clock
+```
+
+One local run on `go1.23.0 windows/amd64` with `GOMAXPROCS=4` recorded 1,000,000 intervals: 999,986 were zero, 14 were positive, and none were negative. The smallest positive interval was 404.4 µs and the largest was 548.7 µs.
+
+This directly demonstrates repeated identical clock readings in this environment and supports clock granularity as a possible explanation for the zero request samples. It does not prove the cause of each zero request duration or establish an exact, guaranteed clock resolution. The observed intervals include loop overhead and scheduling. The historical latency minimum remains qualified; zero samples are not discarded.
+
 ### Results
 
 Each row is a fresh 10-second run, separate from the Day 1 measurements.

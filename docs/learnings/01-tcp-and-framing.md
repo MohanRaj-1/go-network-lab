@@ -34,6 +34,8 @@ go handleConnection(conn)
 
 This allows the main goroutine to continue accepting new connections while individual connection handlers wait for network I/O.
 
+This does not make the server ready for unlimited clients. Connection limits, resource management, and coordinated shutdown are separate concerns.
+
 ---
 
 ## 4. Connection Errors and Cleanup
@@ -84,7 +86,7 @@ Read → HELLO
 Read → WORLD
 ```
 
-Our experiment with a small read buffer demonstrated that the server could instead observe:
+My experiment with a small read buffer demonstrated that the server could instead observe:
 
 ```text
 HEL
@@ -92,6 +94,8 @@ LO
 WOR
 LD
 ```
+
+These were the chunks observed in this experiment, not a sequence guaranteed by TCP. Another run can split or combine the bytes differently.
 
 ---
 
@@ -123,6 +127,8 @@ For example:
 
 The server first reads the four-byte length, validates that the message is within the allowed maximum size, and then reads exactly that many payload bytes.
 
+The framing server's `maxMessageSize` is 1 MiB (1,048,576 bytes). If the declared length exceeds it, the handler logs `message too large`, returns, and closes the connection before allocating or reading the payload.
+
 I used big-endian encoding for the length.
 
 ---
@@ -153,7 +159,7 @@ I used `io.ReadFull` so the server continues reading until the requested number 
 
 A TCP connection can carry multiple application-level messages.
 
-Our framing server repeatedly reads:
+My framing server repeatedly reads:
 
 ```text
 [length][payload]
@@ -172,7 +178,7 @@ WORLD
 
 and receiving both messages from the same connection.
 
-This gives us a persistent connection carrying multiple framed messages.
+This creates a persistent connection carrying multiple framed messages.
 
 ---
 
@@ -184,7 +190,7 @@ Created a small TCP server on port `8080`.
 
 Used `curl` to connect to it and observed the HTTP request sent by the client.
 
-The server then wrote an HTTP response back to the client, and `curl -v` allowed us to inspect the HTTP response headers.
+The server then wrote an HTTP response back to the client, and I used `curl -v` to inspect the HTTP response headers.
 
 This helped me understand that HTTP data can be transferred over a TCP connection.
 
@@ -217,7 +223,9 @@ LD
 
 This demonstrated that TCP is a byte stream and does not preserve application message boundaries.
 
-### Experiment 2.1 — Building Our Own Framing Protocol
+The observed chunks were specific to this run. A three-byte buffer bounds each read's size; it does not determine where every read ends.
+
+### Experiment 2.1 — Building My Own Framing Protocol
 
 Built a framing server and client using a four-byte length prefix followed by the payload.
 

@@ -77,7 +77,7 @@ LookupA: coordinates one lookup
     |
     +-- Message parsing: header / questions / records / compression
     |
-    +-- Response validation: does this message match our query?
+    +-- Response validation: does this message match my query?
     |
     +-- Result handling: RCODE, then A-record interpretation
 ```
@@ -86,7 +86,7 @@ LookupA: coordinates one lookup
 
 `DecodeMessage` does not know whether its input came from UDP, TCP, or a test fixture. For TCP, the framing layer removes the length prefix before the DNS bytes reach the decoder. This also keeps compression offsets relative to the DNS message rather than the surrounding transport frame.
 
-Successful parsing does not establish that a response belongs to our query. `ValidateResponse` receives the decoded message and the expected query details, while `validateRCode` interprets the server's result separately. `ExtractARecords` then interprets only matching A/IN data. Keeping RDATA raw in the generic decoder avoids coupling every record read to IPv4-specific rules.
+Successful parsing does not establish that a response belongs to my query. `ValidateResponse` receives the decoded message and the expected query details, while `validateRCode` interprets the server's result separately. `ExtractARecords` then interprets only matching A/IN data. Keeping RDATA raw in the generic decoder avoids coupling every record read to IPv4-specific rules.
 
 These boundaries determine how errors travel as well. A short TCP body is a framing/I/O failure, an incomplete declared DNS record is a decoding failure, a wrong question is a validation failure, and malformed matching A data is an extraction failure. The lookup decides whether a particular failure ends the operation or, for an unrelated UDP response, means it should keep waiting under the same deadline.
 
@@ -128,7 +128,7 @@ The ID lets the client correlate a response with the outstanding query. Random g
 
 `EncodeQuery` builds a `Header` and passes it to `encodeHeader`, which writes six two-byte fields into a 12-byte buffer using `binary.BigEndian.PutUint16`.
 
-| Field | Value in our query | Reason |
+| Field | Value in my query | Reason |
 | --- | --- | --- |
 | ID | Generated lookup ID | Correlate the response with this query |
 | Flags | `FlagRD`, or `0x0100` | Ask the configured resolver to perform recursive resolution |
@@ -137,9 +137,9 @@ The ID lets the client correlate a response with the outstanding query. Random g
 | NSCOUNT | `0` | The query includes no authority records |
 | ARCOUNT | `0` | The query includes no additional records |
 
-Setting RD expresses the client's request for recursion; it does not guarantee that the server will offer or successfully perform it. Our client delegates resolution to the configured resolver rather than following referrals itself. The header's other flag bits remain clear, including QR, because this is a query.
+Setting RD expresses the client's request for recursion; it does not guarantee that the server will offer or successfully perform it. My client delegates resolution to the configured resolver rather than following referrals itself. The header's other flag bits remain clear, including QR, because this is a query.
 
-The counts describe the sections actually encoded. In particular, zero answer records means we are asking a question without supplying answers; it does not predict how many answers the response will contain. No EDNS record is appended, so the additional count is also zero.
+The counts describe the sections actually encoded. In particular, zero answer records means I am asking a question without supplying answers; it does not predict how many answers the response will contain. No EDNS record is appended, so the additional count is also zero.
 
 ### Encoding the Name
 
@@ -168,7 +168,7 @@ Rejecting invalid input at this stage prevents the client from sending a malform
 
 ### Appending Type and Class
 
-After the encoded name, `encodeQuestion` reserves four bytes and writes QTYPE and QCLASS as big-endian values. For our A/IN question, both values are `1`:
+After the encoded name, `encodeQuestion` reserves four bytes and writes QTYPE and QCLASS as big-endian values. For my A/IN question, both values are `1`:
 
 ```text
 QNAME:  07 65 78 61 6d 70 6c 65 03 63 6f 6d 00
@@ -230,7 +230,7 @@ The header provides the counts needed to parse the remaining sections. After suc
 | NSCOUNT | Decode that many authority records |
 | ARCOUNT | Decode that many additional records |
 
-A zero count skips the corresponding section without advancing the offset. The generic decoder does not require one question or any answers; the single-question rule belongs to response validation for our client.
+A zero count skips the corresponding section without advancing the offset. The generic decoder does not require one question or any answers; the single-question rule belongs to response validation for my client.
 
 ### Advance Using Returned Offsets
 
@@ -305,7 +305,7 @@ Header counts control the loops, but they are not trusted as proof that sufficie
 
 The implementation grows slices as items decode rather than allocating capacity directly from the header's untrusted counts. A large count on a short packet reaches a bounds error; it does not justify allocating storage for thousands of records before reading them.
 
-This complete-message-or-error contract prevents callers from mistaking a successfully decoded prefix for a valid complete response. A successful return means every declared item was decoded within our supported formats. It does not establish query matching or record-specific correctness. The current implementation also does not reject trailing bytes after the declared sections, so successful decoding alone is not a general guarantee that every input byte was consumed.
+This complete-message-or-error contract prevents callers from mistaking a successfully decoded prefix for a valid complete response. A successful return means every declared item was decoded within my supported formats. It does not establish query matching or record-specific correctness. The current implementation also does not reject trailing bytes after the declared sections, so successful decoding alone is not a general guarantee that every input byte was consumed.
 
 ## 4. Response Validation and Result Interpretation
 
@@ -406,7 +406,7 @@ A matching ID makes the packet a candidate response, not a proven valid answer. 
 | Decoding succeeds but response validation fails | Continue waiting |
 | Decoding and validation succeed | Process TC, then the server result |
 
-Returning an error for a matching-ID malformed packet is an explicit policy in this implementation. Once a candidate with our ID cannot be parsed, the client reports that failure instead of silently converting it into a later timeout. The ID is not authentication; this policy does not claim that matching bytes prove the sender produced a legitimate answer.
+Returning an error for a matching-ID malformed packet is an explicit policy in this implementation. Once a candidate with my ID cannot be parsed, the client reports that failure instead of silently converting it into a later timeout. The ID is not authentication; this policy does not claim that matching bytes prove the sender produced a legitimate answer.
 
 A decoded packet with QR unset, a wrong question, or an unexpected question count does not satisfy the lookup's response contract. On UDP, the client can discard that datagram and wait for another one. `ValidateResponse` reports the mismatch, while `LookupA` decides that its transport policy is to continue. If no acceptable response follows, the existing deadline eventually ends the operation.
 
@@ -434,7 +434,7 @@ The parser cannot decide whether to ignore a UDP datagram, open a TCP connection
 
 ## 6. TCP Fallback and Framing
 
-TCP gives us a reliable, ordered byte stream, but it does not preserve application-level message boundaries. Switching transports therefore requires more than replacing a UDP dial with a TCP dial: the client must write a complete frame and use the response's length prefix to determine exactly where the DNS message ends.
+TCP provides a reliable, ordered byte stream, but it does not preserve application-level message boundaries. Switching transports therefore requires more than replacing a UDP dial with a TCP dial: the client must write a complete frame and use the response's length prefix to determine exactly where the DNS message ends.
 
 ```text
 Decoded and validated UDP response has TC=1
@@ -498,7 +498,7 @@ To handle cancellation before the deadline, `context.AfterFunc` closes the conne
 
 ### Validate the New Response
 
-Successful framing means a complete payload arrived, not that it answers our question. Back in `LookupA`, the TCP bytes go through `DecodeMessage` and `ValidateResponse` using the original ID and question. Unlike the UDP receive loop, this dedicated one-query TCP exchange returns a validation error instead of waiting for another message.
+Successful framing means a complete payload arrived, not that it answers my question. Back in `LookupA`, the TCP bytes go through `DecodeMessage` and `ValidateResponse` using the original ID and question. Unlike the UDP receive loop, this dedicated one-query TCP exchange returns a validation error instead of waiting for another message.
 
 If the validated TCP response still has TC set, the client returns an error. It does not recursively start another fallback, which would risk an unbounded sequence of TCP exchanges. Only a nontruncated response proceeds to RCODE handling and A-record extraction.
 
