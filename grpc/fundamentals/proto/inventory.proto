@@ -1,0 +1,18 @@
+
+syntax = "proto3";
+
+package inventory.v1;
+
+option go_package = "github.com/MohanRaj-1/go-network-lab/grpc/fundamentals/proto;inventorypb";
+
+service InventoryService {
+  rpc CheckStock (StockRequest) returns (StockResponse);
+}
+
+message StockRequest {
+  string product_id = 1;
+}
+
+message StockResponse {
+  bool available = 1;
+}

@@ -241,9 +241,23 @@ The experiments use a local, unencrypted `ws://` connection rather than a custom
 Detailed observations, the ping-timeout investigation, and limitations are in
 [`docs/learnings/11-websockets-fundamentals.md`](docs/learnings/11-websockets-fundamentals.md).
 
+### gRPC Fundamentals
+
+A Go unary gRPC service demonstrating Protocol Buffers code generation, client-server communication, deadlines, context cancellation, and in-memory automated testing.
+
+Detailed notes: [`docs/learnings/grpc-fundamentals.md`](docs/learnings/grpc-fundamentals.md)
+
+Run the tests:
+
+```bash
+go test ./grpc/fundamentals/... -v
+go test ./grpc/fundamentals/... -race
+go vet ./grpc/fundamentals/...
+```
+
 ### Upcoming
 
-Future experiments include gRPC and service-to-service networking.
+Future experiments include further gRPC and service-to-service networking.
 
 ## Running the HTTP/2 Experiments
 
