@@ -243,9 +243,11 @@ Detailed observations, the ping-timeout investigation, and limitations are in
 
 ### gRPC Fundamentals
 
+Status: In progress
+
 A Go unary gRPC service demonstrating Protocol Buffers code generation, client-server communication, deadlines, context cancellation, and in-memory automated testing.
 
-Detailed notes: [`docs/learnings/grpc-fundamentals.md`](docs/learnings/grpc-fundamentals.md)
+Detailed notes: [`docs/learnings/12-grpc-fundamentals.md`](docs/learnings/12-grpc-fundamentals.md)
 
 Run the tests:
 

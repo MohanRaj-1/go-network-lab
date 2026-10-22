@@ -4,10 +4,12 @@ import (
 	"context"
 	"log"
 	"net"
+	"strings"
 	"time"
 
 	inventorypb "github.com/MohanRaj-1/go-network-lab/grpc/fundamentals/proto"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
@@ -22,9 +24,20 @@ func (s *inventoryServer) CheckStock(
 	ctx context.Context,
 	req *inventorypb.StockRequest,
 ) (*inventorypb.StockResponse, error) {
-	log.Printf("CheckStock started for product: %q", req.GetProductId())
+	productID := strings.TrimSpace(req.GetProductId())
 
-	if req.GetProductId() == "slow-item" {
+	log.Printf("CheckStock called for product: %q", productID)
+
+	// 1. Validate the request before performing work.
+	if productID == "" {
+		return nil, status.Error(
+			codes.InvalidArgument,
+			"product_id must not be empty",
+		)
+	}
+
+	// 2. Preserve the slow operation for deadline/cancellation experiments.
+	if productID == "slow-item" {
 		select {
 		case s.slowOperationStarted <- struct{}{}:
 		default:
@@ -33,20 +46,31 @@ func (s *inventoryServer) CheckStock(
 		select {
 		case <-time.After(5 * time.Second):
 			log.Println("Slow operation completed")
-
 		case <-ctx.Done():
 			log.Printf("Server observed cancellation: %v", ctx.Err())
 			return nil, status.FromContextError(ctx.Err()).Err()
 		}
 	}
 
+	// 3. Don't continue if the request context has already expired.
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
 
-	return &inventorypb.StockResponse{
-		Available: req.GetProductId() == "keyboard",
-	}, nil
+	// 4. Distinguish a missing product from an unavailable product.
+	switch productID {
+	case "keyboard":
+		return &inventorypb.StockResponse{Available: true}, nil
+
+	case "monitor":
+		return &inventorypb.StockResponse{Available: false}, nil
+
+	default:
+		return nil, status.Error(
+			codes.NotFound,
+			"product not found",
+		)
+	}
 }
 
 func main() {

@@ -148,3 +148,54 @@ func TestCheckStockSlowOperationCancellation(t *testing.T) {
 		t.Fatal("handler did not return after cancellation")
 	}
 }
+
+func TestCheckStockErrors(t *testing.T) {
+	client := startTestServer(t, nil)
+
+	tests := []struct {
+		name       string
+		productID  string
+		wantStatus codes.Code
+	}{
+		{
+			name:       "empty product ID",
+			productID:  "",
+			wantStatus: codes.InvalidArgument,
+		},
+		{
+			name:       "whitespace product ID",
+			productID:  "   ",
+			wantStatus: codes.InvalidArgument,
+		},
+		{
+			name:       "unknown product",
+			productID:  "unknown-product",
+			wantStatus: codes.NotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(
+				context.Background(),
+				time.Second,
+			)
+			defer cancel()
+
+			_, err := client.CheckStock(ctx, &inventorypb.StockRequest{
+				ProductId: tt.productID,
+			})
+			if err == nil {
+				t.Fatal("CheckStock() error = nil, want a status error")
+			}
+
+			if got := status.Code(err); got != tt.wantStatus {
+				t.Errorf(
+					"status.Code(err) = %s, want %s",
+					got,
+					tt.wantStatus,
+				)
+			}
+		})
+	}
+}
