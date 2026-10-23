@@ -8,6 +8,7 @@ import (
 	inventorypb "github.com/MohanRaj-1/go-network-lab/grpc/fundamentals/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 )
 
 func main() {
@@ -27,6 +28,12 @@ func main() {
 		1*time.Second,
 	)
 	defer cancel()
+
+	md := metadata.Pairs(
+		"x-correlation-id", "req-12345",
+	)
+
+	ctx = metadata.NewOutgoingContext(ctx, md)
 
 	_, err = client.CheckStock(ctx, &inventorypb.StockRequest{
 		ProductId: "slow-item",

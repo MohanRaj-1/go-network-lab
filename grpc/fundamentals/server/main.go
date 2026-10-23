@@ -10,6 +10,7 @@ import (
 	inventorypb "github.com/MohanRaj-1/go-network-lab/grpc/fundamentals/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -24,9 +25,12 @@ func (s *inventoryServer) CheckStock(
 	ctx context.Context,
 	req *inventorypb.StockRequest,
 ) (*inventorypb.StockResponse, error) {
-	productID := strings.TrimSpace(req.GetProductId())
 
-	log.Printf("CheckStock called for product: %q", productID)
+	correlationID := correlationIDFromContext(ctx)
+	log.Printf("correlation_id=%q CheckStock called for product: %q",
+		correlationID, req.GetProductId())
+
+	productID := strings.TrimSpace(req.GetProductId())
 
 	// 1. Validate the request before performing work.
 	if productID == "" {
@@ -71,6 +75,20 @@ func (s *inventoryServer) CheckStock(
 			"product not found",
 		)
 	}
+}
+
+func correlationIDFromContext(ctx context.Context) string {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return "missing"
+	}
+
+	ids := md.Get("x-correlation-id")
+	if len(ids) == 0 {
+		return "missing"
+	}
+
+	return ids[0]
 }
 
 func main() {

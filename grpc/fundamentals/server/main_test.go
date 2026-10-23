@@ -10,13 +10,17 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
 
 const bufSize = 1024 * 1024
 
-func startTestServer(t *testing.T, slowOperationStarted chan<- struct{}) inventorypb.InventoryServiceClient {
+func startTestServer(
+	t *testing.T,
+	slowOperationStarted chan<- struct{},
+) inventorypb.InventoryServiceClient {
 	t.Helper()
 
 	listener := bufconn.Listen(bufSize)
@@ -24,7 +28,9 @@ func startTestServer(t *testing.T, slowOperationStarted chan<- struct{}) invento
 
 	inventorypb.RegisterInventoryServiceServer(
 		server,
-		&inventoryServer{slowOperationStarted: slowOperationStarted},
+		&inventoryServer{
+			slowOperationStarted: slowOperationStarted,
+		},
 	)
 
 	go func() {
@@ -195,6 +201,40 @@ func TestCheckStockErrors(t *testing.T) {
 					got,
 					tt.wantStatus,
 				)
+			}
+		})
+	}
+}
+
+func TestCorrelationIDFromContext(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{
+			name: "incoming correlation ID",
+			ctx: metadata.NewIncomingContext(context.Background(),
+				metadata.Pairs("x-correlation-id", "req-test-123")),
+			want: "req-test-123",
+		},
+		{
+			name: "no incoming metadata",
+			ctx:  context.Background(),
+			want: "missing",
+		},
+		{
+			name: "metadata without correlation ID",
+			ctx: metadata.NewIncomingContext(context.Background(),
+				metadata.Pairs("other-key", "value")),
+			want: "missing",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := correlationIDFromContext(tt.ctx); got != tt.want {
+				t.Errorf("correlationIDFromContext() = %q, want %q", got, tt.want)
 			}
 		})
 	}

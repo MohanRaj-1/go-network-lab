@@ -121,3 +121,49 @@ go vet ./grpc/fundamentals/...
 ```
 
 The catalog remains hard-coded for this lab. Authentication, TLS, graceful shutdown, and production observability remain outside the implemented scope. The optional, unexported `slowOperationStarted` channel supports test synchronization and is nil in production; broader instrumentation should use a cleaner separation as the service grows.
+
+## Day 3 — gRPC Metadata and Correlation IDs
+
+### Attaching and Reading Metadata
+
+gRPC metadata carries key-value information alongside an RPC without adding fields to its Protocol Buffers request message. The client creates metadata with `metadata.Pairs` and attaches it to the outgoing request context:
+
+```go
+md := metadata.Pairs("x-correlation-id", "req-12345")
+ctx = metadata.NewOutgoingContext(ctx, md)
+```
+
+On the server, `metadata.FromIncomingContext(ctx)` reads the incoming metadata. The `correlationIDFromContext` helper retrieves `x-correlation-id` and returns its first value. If incoming metadata is absent or the key has no values, it returns `"missing"`.
+
+### Correlation IDs and Context Preservation
+
+The client sends `x-correlation-id`, and the server includes it in the request log as `correlation_id`. This makes a request easier to identify in logs. Requests without the ID still work; `"missing"` is a logging fallback rather than a validation error.
+
+The client attaches metadata to the existing context created by `context.WithTimeout`, preserving its one-second deadline and cancellation behavior. Creating a new context from `context.Background()` at this point would discard that timeout relationship.
+
+The manual client-server run showed `correlation_id="req-12345"` in the server log for `slow-item`. The client received `DeadlineExceeded`, and the server observed `context deadline exceeded` instead of waiting for the five-second operation to complete. This verified metadata propagation alongside the existing cooperative cancellation behavior.
+
+### Testing Strategy
+
+`TestCorrelationIDFromContext` directly tests three parsing cases:
+
+- Incoming metadata contains `req-test-123`: returns `req-test-123`.
+- No incoming metadata: returns `"missing"`.
+- Incoming metadata exists without `x-correlation-id`: returns `"missing"`.
+
+The metadata cases use `metadata.NewIncomingContext`. These unit tests check parsing and fallback behavior; they do not prove that metadata crosses the gRPC client-server boundary. The manual run provided that end-to-end evidence.
+
+Extracting the helper removed the test-specific `correlationIDObserved` field and its notification block from the production server. The existing `slowOperationStarted` channel remains for cancellation-test synchronization.
+
+### Validation
+
+The supplied post-refactor validation output shows the tests, race-detector check, and vet check passed:
+
+```bash
+go test ./grpc/fundamentals/... -v
+go test ./grpc/fundamentals/... -race
+go vet ./grpc/fundamentals/...
+git diff --check
+```
+
+The race-detector result was cached. `git diff --check` reported no whitespace errors; its LF/CRLF warnings concerned line-ending conversion rather than test failures.
