@@ -167,3 +167,64 @@ git diff --check
 ```
 
 The race-detector result was cached. `git diff --check` reported no whitespace errors; its LF/CRLF warnings concerned line-ending conversion rather than test failures.
+
+## Day 4 — Unary Server Interceptors
+
+### Centralizing Request Logging
+
+A unary server interceptor wraps an RPC handler with common behavior. Logging the RPC lifecycle in one place avoids repeating method, correlation ID, duration, and error logging in individual service methods.
+
+`loggingUnaryInterceptor` uses the existing `correlationIDFromContext` helper. The duplicate request-start log and its unused correlation ID variable were removed from `CheckStock`; inventory validation and cancellation handling remain in the handler.
+
+### Interceptor Flow and the Handler
+
+The interceptor follows the `grpc.UnaryServerInterceptor` signature: it receives the request context, request, `grpc.UnaryServerInfo`, and a `grpc.UnaryHandler` callback.
+
+For each unary RPC, the logging interceptor:
+
+1. Extracts the correlation ID and records the start time.
+2. Logs `rpc started` with `info.FullMethod` and the correlation ID.
+3. Calls `handler(ctx, req)` to execute the next handler.
+4. Logs `rpc completed` with the method, correlation ID, elapsed duration, and returned error.
+5. Returns the original response and error unchanged.
+
+If an interceptor never calls `handler`, the normal service business logic does not execute. It can instead return its own response or error. This logging interceptor always calls the handler and logs completion when it returns, including when it returns an error. It does not recover panics.
+
+### Registration
+
+Both `main()` and the `startTestServer` helper register the interceptor:
+
+```go
+server := grpc.NewServer(
+    grpc.UnaryInterceptor(loggingUnaryInterceptor),
+)
+```
+
+The in-memory test server is a separate server instance. Registering the interceptor only in `main()` would not exercise it through the `bufconn` tests.
+
+### Observed Request Lifecycle
+
+The supplied verbose test output shows one interceptor start entry and one completion entry for each RPC that returns. Completion logs include errors such as `InvalidArgument`, `NotFound`, and `DeadlineExceeded`, as well as `error=<nil>` for successful calls.
+
+In the deadline run, the start log precedes the handler's cancellation log, followed by a completion log containing the handler's `DeadlineExceeded` error. The duration measures time around the handler call and logging; it is not an end-to-end client latency measurement.
+
+`TestCheckStockSlowOperationCancellation` calls the service handler directly, so it bypasses the interceptor. The RPC-based tests exercise the registered interceptor; their log output provides evidence that it runs, without automated assertions on log formatting.
+
+### Focused Tests
+
+`TestLoggingUnaryInterceptor` calls the interceptor directly without a running gRPC server:
+
+- `passes through response` verifies that the handler is invoked, no error is introduced, and the expected response is returned.
+- `passes through error` verifies that the exact original handler error is returned, without wrapping or replacement.
+
+These unit tests check the interceptor's contract in isolation. The existing in-memory RPC tests check service behavior with the interceptor registered. Neither replaces the other, and the focused tests do not assert log contents or exact durations.
+
+### Validation
+
+The supplied Day 4 validation output shows all three checks passed:
+
+```bash
+go test ./grpc/fundamentals/... -v
+go test ./grpc/fundamentals/... -race
+go vet ./grpc/fundamentals/...
+```

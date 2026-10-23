@@ -26,10 +26,6 @@ func (s *inventoryServer) CheckStock(
 	req *inventorypb.StockRequest,
 ) (*inventorypb.StockResponse, error) {
 
-	correlationID := correlationIDFromContext(ctx)
-	log.Printf("correlation_id=%q CheckStock called for product: %q",
-		correlationID, req.GetProductId())
-
 	productID := strings.TrimSpace(req.GetProductId())
 
 	// 1. Validate the request before performing work.
@@ -97,7 +93,9 @@ func main() {
 		log.Fatalf("listen: %v", err)
 	}
 
-	server := grpc.NewServer()
+	server := grpc.NewServer(
+		grpc.UnaryInterceptor(loggingUnaryInterceptor),
+	)
 	inventorypb.RegisterInventoryServiceServer(
 		server,
 		&inventoryServer{},
