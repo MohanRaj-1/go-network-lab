@@ -25,7 +25,10 @@ func startTestServer(
 
 	listener := bufconn.Listen(bufSize)
 	server := grpc.NewServer(
-		grpc.UnaryInterceptor(loggingUnaryInterceptor),
+		grpc.ChainUnaryInterceptor(
+			loggingUnaryInterceptor,
+			tracingUnaryInterceptor,
+		),
 	)
 
 	inventorypb.RegisterInventoryServiceServer(

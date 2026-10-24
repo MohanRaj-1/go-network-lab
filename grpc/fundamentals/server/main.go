@@ -94,7 +94,10 @@ func main() {
 	}
 
 	server := grpc.NewServer(
-		grpc.UnaryInterceptor(loggingUnaryInterceptor),
+		grpc.ChainUnaryInterceptor(
+			loggingUnaryInterceptor,
+			tracingUnaryInterceptor,
+		),
 	)
 	inventorypb.RegisterInventoryServiceServer(
 		server,

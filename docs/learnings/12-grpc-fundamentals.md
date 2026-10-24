@@ -228,3 +228,67 @@ go test ./grpc/fundamentals/... -v
 go test ./grpc/fundamentals/... -race
 go vet ./grpc/fundamentals/...
 ```
+
+## Day 5 — Chaining Unary Server Interceptors
+
+### Purpose and Demonstration Interceptor
+
+Multiple interceptors let a service compose common responsibilities, such as logging, authentication, metrics, or recovery, around its business handler. Their order determines which behavior wraps the rest of the request lifecycle.
+
+For this experiment, `tracingUnaryInterceptor` logs `TRACE: entering` with the full RPC method, calls `handler(ctx, req)`, logs `TRACE: exiting` when that call returns, and returns the original response and error.
+
+This interceptor demonstrates chaining. It is not a production tracing implementation: it creates no distributed tracing spans and overlaps with the existing logging interceptor's start and completion logs. It remains in the lab for this milestone; a distinct responsibility would be more useful as the service grows.
+
+### Registration and Execution Order
+
+Both the production server and the in-memory test server now register the same chain:
+
+```go
+server := grpc.NewServer(
+    grpc.ChainUnaryInterceptor(
+        loggingUnaryInterceptor,
+        tracingUnaryInterceptor,
+    ),
+)
+```
+
+`grpc.ChainUnaryInterceptor` composes the interceptors in registration order, with the first interceptor outermost. Each interceptor's `handler` callback invokes the remaining chain, eventually reaching the service method.
+
+When each interceptor calls its next handler and those calls return normally, execution follows this order:
+
+```text
+logging: before
+tracing: before
+service handler
+tracing: after
+logging: after
+```
+
+The observed RPC logs show `rpc started`, `TRACE: entering`, `TRACE: exiting`, and `rpc completed` in that order, with service work occurring between the trace entries.
+
+### Errors and Short-Circuiting
+
+A returned error does not prevent the code after `handler(ctx, req)` from running. The tracing interceptor logs its exit, then returns the error unchanged; the outer logging interceptor records the returned error and completes. The supplied RPC output demonstrates this for `InvalidArgument`, `NotFound`, and deadline cancellation.
+
+An interceptor can short-circuit the remaining chain by returning without invoking its next handler. Later interceptors and the service handler are then skipped. An outer interceptor that already called this inner interceptor can still resume after it returns. This describes ordinary returns, including errors; neither lab interceptor recovers panics.
+
+The manual deadline experiment also showed different client and server perspectives: the client reported `DeadlineExceeded`, while the server observed `context.Canceled` and returned `Canceled`. The client can reach its own deadline while the server observes cancellation of the RPC. Server processing duration is not an exact end-to-end client latency measurement.
+
+### Testing the Contract and the Chain
+
+- `TestTracingUnaryInterceptor` verifies that the next handler is called and its successful response is returned without an added error.
+- `TestTracingUnaryInterceptorPassesThroughError` verifies that the exact original handler error is returned without replacement or wrapping.
+- `TestUnaryInterceptorExecutionOrder` uses a sequence slice to assert manually nested interceptor execution. It demonstrates nesting without relying on log formatting, but does not invoke `grpc.ChainUnaryInterceptor` or the production interceptors.
+- The existing RPC tests use `bufconn` with the actual logging and tracing chain registered. Their supplied verbose output shows both interceptors running while stock, validation, and deadline behavior remains intact. Execution order in this RPC path was inspected through logs rather than asserted by a sequence test.
+
+`TestCheckStockSlowOperationCancellation` continues to call the service method directly and bypasses both interceptors.
+
+### Validation
+
+The supplied Day 5 output shows the full test suite, race-detector check, and vet check passed after registering the chain in the test server:
+
+```bash
+go test ./grpc/fundamentals/... -v
+go test ./grpc/fundamentals/... -race
+go vet ./grpc/fundamentals/...
+```
