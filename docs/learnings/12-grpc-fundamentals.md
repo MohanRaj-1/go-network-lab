@@ -437,3 +437,44 @@ git diff --check
 ```
 
 The server test results were cached in both test runs. The LF/CRLF message from Git was a line-ending warning; no whitespace errors were reported.
+
+## Day 9 — Client-Streaming RPC
+
+### Objective
+
+Implement a client-streaming RPC in which the client sends multiple messages and receives one final response.
+
+### What I Implemented
+
+- Added the `ReportStock` RPC to `inventory.proto`.
+- Defined `StockReportResponse` with `received_count` and `available_count`.
+- Regenerated the Go Protobuf and gRPC code.
+- Implemented the server handler to receive stock items until `Recv()` returns `io.EOF`.
+- Used `SendAndClose()` to return the final report.
+- Implemented the client to send multiple stock items using `Send()`.
+- Used `CloseAndRecv()` to finish sending and receive the final response.
+- Added automated tests for multiple items, an empty stream, and a single available item.
+
+### Client-Streaming Lifecycle
+
+1. The client opens the stream.
+2. The client sends zero or more messages.
+3. The client calls `CloseAndRecv()`.
+4. The server receives messages until `io.EOF`.
+5. The server sends one final response using `SendAndClose()`.
+6. The client receives the response or an error.
+
+### Validation
+
+The reported Day 9 validation results were successful:
+
+- `gofmt` completed successfully.
+- `go test ./grpc/fundamentals/...` passed.
+- `go test -race ./grpc/fundamentals/...` passed.
+- `go vet ./grpc/fundamentals/...` passed.
+
+### Key Learning
+
+Client streaming is useful when a client needs to submit multiple messages and receive a single aggregated result, such as a batch report or a collection of telemetry records.
+
+Lab note: The current authentication, logging, and tracing interceptors are unary interceptors. They do not automatically apply to streaming RPCs.

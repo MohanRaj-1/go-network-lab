@@ -63,6 +63,10 @@ func main() {
 	if err := listFirstStockItems(streamCtx, client, 2); err != nil {
 		log.Printf("ListStock with limit failed: %v", err)
 	}
+
+	if err := reportStock(streamCtx, client); err != nil {
+		log.Printf("ReportStock failed: %v", err)
+	}
 }
 
 func listStock(
@@ -137,5 +141,40 @@ func listFirstStockItems(
 	}
 
 	log.Printf("Received %d items; stopping stream consumption", limit)
+	return nil
+}
+
+func reportStock(
+	ctx context.Context,
+	client inventorypb.InventoryServiceClient,
+) error {
+	stream, err := client.ReportStock(ctx)
+	if err != nil {
+		return fmt.Errorf("start stock report: %w", err)
+	}
+
+	items := []*inventorypb.StockItem{
+		{ProductId: "keyboard", Available: true},
+		{ProductId: "monitor", Available: false},
+		{ProductId: "mouse", Available: true},
+	}
+
+	for _, item := range items {
+		if err := stream.Send(item); err != nil {
+			return fmt.Errorf("send stock item %q: %w", item.GetProductId(), err)
+		}
+	}
+
+	report, err := stream.CloseAndRecv()
+	if err != nil {
+		return fmt.Errorf("receive stock report: %w", err)
+	}
+
+	log.Printf(
+		"Stock report completed: received=%d, available=%d",
+		report.GetReceivedCount(),
+		report.GetAvailableCount(),
+	)
+
 	return nil
 }

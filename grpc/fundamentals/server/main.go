@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"net"
 	"strings"
@@ -126,6 +127,39 @@ func correlationIDFromContext(ctx context.Context) string {
 	}
 
 	return ids[0]
+}
+
+func (s *inventoryServer) ReportStock(
+	stream grpc.ClientStreamingServer[
+		inventorypb.StockItem,
+		inventorypb.StockReportResponse,
+	],
+) error {
+	var receivedCount int32
+	var availableCount int32
+
+	for {
+		item, err := stream.Recv()
+
+		if err == io.EOF {
+			return stream.SendAndClose(
+				&inventorypb.StockReportResponse{
+					ReceivedCount:  receivedCount,
+					AvailableCount: availableCount,
+				},
+			)
+		}
+
+		if err != nil {
+			return err
+		}
+
+		receivedCount++
+
+		if item.GetAvailable() {
+			availableCount++
+		}
+	}
 }
 
 func main() {

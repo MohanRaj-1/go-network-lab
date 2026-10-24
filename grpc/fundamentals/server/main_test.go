@@ -393,3 +393,81 @@ func TestListStockCancellation(t *testing.T) {
 			status.Code(err), codes.Canceled, err)
 	}
 }
+
+func TestReportStock(t *testing.T) {
+	client := startTestServer(t, nil, nil, nil)
+
+	tests := []struct {
+		name               string
+		items              []*inventorypb.StockItem
+		wantReceivedCount  int32
+		wantAvailableCount int32
+	}{
+		{
+			name: "multiple stock items",
+			items: []*inventorypb.StockItem{
+				{ProductId: "keyboard", Available: true},
+				{ProductId: "monitor", Available: false},
+				{ProductId: "mouse", Available: true},
+			},
+			wantReceivedCount:  3,
+			wantAvailableCount: 2,
+		},
+		{
+			name:               "empty stream",
+			items:              nil,
+			wantReceivedCount:  0,
+			wantAvailableCount: 0,
+		},
+		{
+			name: "single available item",
+			items: []*inventorypb.StockItem{
+				{ProductId: "keyboard", Available: true},
+			},
+			wantReceivedCount:  1,
+			wantAvailableCount: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(
+				context.Background(),
+				5*time.Second,
+			)
+			defer cancel()
+
+			stream, err := client.ReportStock(ctx)
+			if err != nil {
+				t.Fatalf("ReportStock() error = %v", err)
+			}
+
+			for _, item := range tt.items {
+				if err := stream.Send(item); err != nil {
+					t.Fatalf("Send(%q) error = %v", item.GetProductId(), err)
+				}
+			}
+
+			report, err := stream.CloseAndRecv()
+			if err != nil {
+				t.Fatalf("CloseAndRecv() error = %v", err)
+			}
+
+			if got := report.GetReceivedCount(); got != tt.wantReceivedCount {
+				t.Errorf(
+					"received count = %d, want %d",
+					got,
+					tt.wantReceivedCount,
+				)
+			}
+
+			if got := report.GetAvailableCount(); got != tt.wantAvailableCount {
+				t.Errorf(
+					"available count = %d, want %d",
+					got,
+					tt.wantAvailableCount,
+				)
+			}
+		})
+	}
+}
