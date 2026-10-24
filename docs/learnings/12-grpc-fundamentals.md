@@ -393,3 +393,47 @@ go vet ./grpc/fundamentals/...
 ```
 
 Status: Completed for the Day 7 server-streaming fundamentals lab.
+
+## Day 8 — Server-Streaming Client and Lifecycle
+
+### Consuming a Complete Stream
+
+`listStock` calls the generated client's `ListStock` method and repeatedly calls `Recv()` to consume individual stock messages. It logs each product and its availability. `io.EOF` means the stream completed normally, so the helper logs completion and returns nil. Other errors are wrapped with context using `%w`, distinguishing stream creation from message-receive failures.
+
+The manual client-server run received `keyboard` (`true`), `monitor` (`false`), and `mouse` (`true`), followed by `Stock stream completed`.
+
+### Limiting Consumption and Cancelling the Child Context
+
+`listFirstStockItems` accepts a configurable positive limit and rejects nonpositive values before starting an RPC. It creates a child context with `context.WithCancel(ctx)` and defers cancellation. The receive loop stops after at most the requested number of items; if the server finishes earlier, `io.EOF` is still successful completion.
+
+Returning after reaching the limit runs the deferred `cancel()`, requesting cancellation of this stream. Cancelling the child does not cancel its parent context. Cancellation remains cooperative on the server.
+
+The client preserves the original unary example with its one-second deadline and creates a separate five-second context for the streaming examples. Both streaming calls use that parent context and its outgoing authorization metadata; their five-second budget is shared across the sequential calls. The limited helper's child inherits that deadline and metadata.
+
+### Manual Observations and Their Limits
+
+The manual run showed normal completion for the full stream, then only `keyboard` and `monitor` for the limited call with a limit of two. The limited call did not print `mouse`.
+
+This confirms that the client stops consuming after two items. The three-item server may already have sent every item before cancellation arrives, so the manual output does not prove that server-side processing stopped immediately. Cancellation is requested by the deferred call when the helper returns, rather than by its preceding log statement.
+
+The unary `slow-item` call still reports `DeadlineExceeded` as expected. The server can observe `context.Canceled` while the client reports its own expired deadline; these are different perspectives on the RPC lifecycle.
+
+### Reusing Controlled Cancellation Coverage
+
+Day 7's `TestListStockCancellation` supplies a controlled scenario: channels pause the server after the first send, the client cancels, and the next receive reports `Canceled`. The server's wait selects on its context's cancellation signal. This exercises the cancellation path without arbitrary sleeps or a large generated inventory, so Day 8 does not add a duplicate test.
+
+As recorded in Day 7, the client-side receive assertion does not independently confirm the exact time the server handler returns. The client helpers themselves currently have no dedicated unit tests; their normal and limited consumption behavior was checked through the manual run.
+
+### Validation
+
+The supplied Day 8 output shows formatting, tests, race detection, vet, and the whitespace check completed successfully:
+
+```bash
+gofmt -w grpc/fundamentals/client/main.go
+go test ./grpc/fundamentals/...
+go test -race ./grpc/fundamentals/...
+go vet ./grpc/fundamentals/...
+git diff --check
+```
+
+The server test results were cached in both test runs. The LF/CRLF message from Git was a line-ending warning; no whitespace errors were reported.

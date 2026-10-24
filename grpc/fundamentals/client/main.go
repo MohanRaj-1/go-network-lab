@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log"
 	"time"
 
@@ -42,4 +44,98 @@ func main() {
 	if err != nil {
 		log.Printf("Client received error: %v", err)
 	}
+
+	streamCtx, streamCancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer streamCancel()
+
+	streamCtx = metadata.NewOutgoingContext(
+		streamCtx,
+		md,
+	)
+
+	if err := listStock(streamCtx, client); err != nil {
+		log.Printf("ListStock failed: %v", err)
+	}
+
+	if err := listFirstStockItems(streamCtx, client, 2); err != nil {
+		log.Printf("ListStock with limit failed: %v", err)
+	}
+}
+
+func listStock(
+	ctx context.Context,
+	client inventorypb.InventoryServiceClient,
+) error {
+	stream, err := client.ListStock(
+		ctx,
+		&inventorypb.StockListRequest{},
+	)
+	if err != nil {
+		return fmt.Errorf("list stock: %w", err)
+	}
+
+	for {
+		item, err := stream.Recv()
+
+		if err == io.EOF {
+			log.Println("Stock stream completed")
+			return nil
+		}
+
+		if err != nil {
+			return fmt.Errorf("receive stock item: %w", err)
+		}
+
+		log.Printf(
+			"Product: %s, Available: %t",
+			item.GetProductId(),
+			item.GetAvailable(),
+		)
+	}
+}
+
+func listFirstStockItems(
+	ctx context.Context,
+	client inventorypb.InventoryServiceClient,
+	limit int,
+) error {
+	if limit <= 0 {
+		return fmt.Errorf("limit must be positive")
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	stream, err := client.ListStock(
+		ctx,
+		&inventorypb.StockListRequest{},
+	)
+	if err != nil {
+		return fmt.Errorf("list stock: %w", err)
+	}
+
+	for i := 0; i < limit; i++ {
+		item, err := stream.Recv()
+
+		if err == io.EOF {
+			log.Println("Stock stream completed before reaching limit")
+			return nil
+		}
+
+		if err != nil {
+			return fmt.Errorf("receive stock item: %w", err)
+		}
+
+		log.Printf(
+			"Product: %s, Available: %t",
+			item.GetProductId(),
+			item.GetAvailable(),
+		)
+	}
+
+	log.Printf("Received %d items; stopping stream consumption", limit)
+	return nil
 }
