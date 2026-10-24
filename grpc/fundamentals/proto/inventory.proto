@@ -7,6 +7,7 @@ option go_package = "github.com/MohanRaj-1/go-network-lab/grpc/fundamentals/prot
 
 service InventoryService {
   rpc CheckStock (StockRequest) returns (StockResponse);
+  rpc ListStock(StockListRequest) returns (stream StockItem);
 }
 
 message StockRequest {
@@ -15,4 +16,11 @@ message StockRequest {
 
 message StockResponse {
   bool available = 1;
+}
+
+message StockListRequest {}
+
+message StockItem {
+  string product_id = 1;
+  bool available = 2;
 }

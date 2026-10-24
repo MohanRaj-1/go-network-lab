@@ -109,6 +109,94 @@ func (x *StockResponse) GetAvailable() bool {
 	return false
 }
 
+type StockListRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StockListRequest) Reset() {
+	*x = StockListRequest{}
+	mi := &file_grpc_fundamentals_proto_inventory_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StockListRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StockListRequest) ProtoMessage() {}
+
+func (x *StockListRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grpc_fundamentals_proto_inventory_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StockListRequest.ProtoReflect.Descriptor instead.
+func (*StockListRequest) Descriptor() ([]byte, []int) {
+	return file_grpc_fundamentals_proto_inventory_proto_rawDescGZIP(), []int{2}
+}
+
+type StockItem struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ProductId     string                 `protobuf:"bytes,1,opt,name=product_id,json=productId,proto3" json:"product_id,omitempty"`
+	Available     bool                   `protobuf:"varint,2,opt,name=available,proto3" json:"available,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StockItem) Reset() {
+	*x = StockItem{}
+	mi := &file_grpc_fundamentals_proto_inventory_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StockItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StockItem) ProtoMessage() {}
+
+func (x *StockItem) ProtoReflect() protoreflect.Message {
+	mi := &file_grpc_fundamentals_proto_inventory_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StockItem.ProtoReflect.Descriptor instead.
+func (*StockItem) Descriptor() ([]byte, []int) {
+	return file_grpc_fundamentals_proto_inventory_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *StockItem) GetProductId() string {
+	if x != nil {
+		return x.ProductId
+	}
+	return ""
+}
+
+func (x *StockItem) GetAvailable() bool {
+	if x != nil {
+		return x.Available
+	}
+	return false
+}
+
 var File_grpc_fundamentals_proto_inventory_proto protoreflect.FileDescriptor
 
 const file_grpc_fundamentals_proto_inventory_proto_rawDesc = "" +
@@ -118,10 +206,16 @@ const file_grpc_fundamentals_proto_inventory_proto_rawDesc = "" +
 	"\n" +
 	"product_id\x18\x01 \x01(\tR\tproductId\"-\n" +
 	"\rStockResponse\x12\x1c\n" +
-	"\tavailable\x18\x01 \x01(\bR\tavailable2Y\n" +
+	"\tavailable\x18\x01 \x01(\bR\tavailable\"\x12\n" +
+	"\x10StockListRequest\"H\n" +
+	"\tStockItem\x12\x1d\n" +
+	"\n" +
+	"product_id\x18\x01 \x01(\tR\tproductId\x12\x1c\n" +
+	"\tavailable\x18\x02 \x01(\bR\tavailable2\xa1\x01\n" +
 	"\x10InventoryService\x12E\n" +
 	"\n" +
-	"CheckStock\x12\x1a.inventory.v1.StockRequest\x1a\x1b.inventory.v1.StockResponseBJZHgithub.com/MohanRaj-1/go-network-lab/grpc/fundamentals/proto;inventorypbb\x06proto3"
+	"CheckStock\x12\x1a.inventory.v1.StockRequest\x1a\x1b.inventory.v1.StockResponse\x12F\n" +
+	"\tListStock\x12\x1e.inventory.v1.StockListRequest\x1a\x17.inventory.v1.StockItem0\x01BJZHgithub.com/MohanRaj-1/go-network-lab/grpc/fundamentals/proto;inventorypbb\x06proto3"
 
 var (
 	file_grpc_fundamentals_proto_inventory_proto_rawDescOnce sync.Once
@@ -135,16 +229,20 @@ func file_grpc_fundamentals_proto_inventory_proto_rawDescGZIP() []byte {
 	return file_grpc_fundamentals_proto_inventory_proto_rawDescData
 }
 
-var file_grpc_fundamentals_proto_inventory_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_grpc_fundamentals_proto_inventory_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_grpc_fundamentals_proto_inventory_proto_goTypes = []any{
-	(*StockRequest)(nil),  // 0: inventory.v1.StockRequest
-	(*StockResponse)(nil), // 1: inventory.v1.StockResponse
+	(*StockRequest)(nil),     // 0: inventory.v1.StockRequest
+	(*StockResponse)(nil),    // 1: inventory.v1.StockResponse
+	(*StockListRequest)(nil), // 2: inventory.v1.StockListRequest
+	(*StockItem)(nil),        // 3: inventory.v1.StockItem
 }
 var file_grpc_fundamentals_proto_inventory_proto_depIdxs = []int32{
 	0, // 0: inventory.v1.InventoryService.CheckStock:input_type -> inventory.v1.StockRequest
-	1, // 1: inventory.v1.InventoryService.CheckStock:output_type -> inventory.v1.StockResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	2, // 1: inventory.v1.InventoryService.ListStock:input_type -> inventory.v1.StockListRequest
+	1, // 2: inventory.v1.InventoryService.CheckStock:output_type -> inventory.v1.StockResponse
+	3, // 3: inventory.v1.InventoryService.ListStock:output_type -> inventory.v1.StockItem
+	2, // [2:4] is the sub-list for method output_type
+	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -161,7 +259,7 @@ func file_grpc_fundamentals_proto_inventory_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_grpc_fundamentals_proto_inventory_proto_rawDesc), len(file_grpc_fundamentals_proto_inventory_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

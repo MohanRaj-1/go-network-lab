@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	InventoryService_CheckStock_FullMethodName = "/inventory.v1.InventoryService/CheckStock"
+	InventoryService_ListStock_FullMethodName  = "/inventory.v1.InventoryService/ListStock"
 )
 
 // InventoryServiceClient is the client API for InventoryService service.
@@ -27,6 +28,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type InventoryServiceClient interface {
 	CheckStock(ctx context.Context, in *StockRequest, opts ...grpc.CallOption) (*StockResponse, error)
+	ListStock(ctx context.Context, in *StockListRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StockItem], error)
 }
 
 type inventoryServiceClient struct {
@@ -47,11 +49,31 @@ func (c *inventoryServiceClient) CheckStock(ctx context.Context, in *StockReques
 	return out, nil
 }
 
+func (c *inventoryServiceClient) ListStock(ctx context.Context, in *StockListRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StockItem], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &InventoryService_ServiceDesc.Streams[0], InventoryService_ListStock_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StockListRequest, StockItem]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type InventoryService_ListStockClient = grpc.ServerStreamingClient[StockItem]
+
 // InventoryServiceServer is the server API for InventoryService service.
 // All implementations must embed UnimplementedInventoryServiceServer
 // for forward compatibility.
 type InventoryServiceServer interface {
 	CheckStock(context.Context, *StockRequest) (*StockResponse, error)
+	ListStock(*StockListRequest, grpc.ServerStreamingServer[StockItem]) error
 	mustEmbedUnimplementedInventoryServiceServer()
 }
 
@@ -64,6 +86,9 @@ type UnimplementedInventoryServiceServer struct{}
 
 func (UnimplementedInventoryServiceServer) CheckStock(context.Context, *StockRequest) (*StockResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CheckStock not implemented")
+}
+func (UnimplementedInventoryServiceServer) ListStock(*StockListRequest, grpc.ServerStreamingServer[StockItem]) error {
+	return status.Errorf(codes.Unimplemented, "method ListStock not implemented")
 }
 func (UnimplementedInventoryServiceServer) mustEmbedUnimplementedInventoryServiceServer() {}
 func (UnimplementedInventoryServiceServer) testEmbeddedByValue()                          {}
@@ -104,6 +129,17 @@ func _InventoryService_CheckStock_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _InventoryService_ListStock_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(StockListRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(InventoryServiceServer).ListStock(m, &grpc.GenericServerStream[StockListRequest, StockItem]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type InventoryService_ListStockServer = grpc.ServerStreamingServer[StockItem]
+
 // InventoryService_ServiceDesc is the grpc.ServiceDesc for InventoryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -116,6 +152,12 @@ var InventoryService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _InventoryService_CheckStock_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ListStock",
+			Handler:       _InventoryService_ListStock_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "grpc/fundamentals/proto/inventory.proto",
 }

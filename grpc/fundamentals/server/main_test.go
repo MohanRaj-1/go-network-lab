@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -16,6 +17,47 @@ import (
 )
 
 const bufSize = 1024 * 1024
+
+func TestListStock(t *testing.T) {
+	client := startTestServer(t, nil, nil, nil)
+	ctx, cancel := context.WithTimeout(authenticatedTestContext(t), 10*time.Second)
+	defer cancel()
+
+	stream, err := client.ListStock(ctx, &inventorypb.StockListRequest{})
+	if err != nil {
+		t.Fatalf("ListStock() error = %v", err)
+	}
+
+	var items []*inventorypb.StockItem
+	for {
+		item, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv() error = %v", err)
+		}
+		items = append(items, item)
+	}
+
+	want := []struct {
+		productID string
+		available bool
+	}{
+		{productID: "keyboard", available: true},
+		{productID: "monitor", available: false},
+		{productID: "mouse", available: true},
+	}
+	if len(items) != len(want) {
+		t.Fatalf("received %d items, want %d", len(items), len(want))
+	}
+	for i, item := range items {
+		if item.GetProductId() != want[i].productID || item.GetAvailable() != want[i].available {
+			t.Errorf("item[%d] = (%q, %t), want (%q, %t)",
+				i, item.GetProductId(), item.GetAvailable(), want[i].productID, want[i].available)
+		}
+	}
+}
 
 func authenticatedTestContext(
 	t *testing.T,
@@ -34,6 +76,8 @@ func authenticatedTestContext(
 func startTestServer(
 	t *testing.T,
 	slowOperationStarted chan<- struct{},
+	firstStockItemSent chan<- struct{},
+	continueAfterFirstStockItem <-chan struct{},
 ) inventorypb.InventoryServiceClient {
 	t.Helper()
 
@@ -46,12 +90,11 @@ func startTestServer(
 		),
 	)
 
-	inventorypb.RegisterInventoryServiceServer(
-		server,
-		&inventoryServer{
-			slowOperationStarted: slowOperationStarted,
-		},
-	)
+	inventorypb.RegisterInventoryServiceServer(server, &inventoryServer{
+		slowOperationStarted:        slowOperationStarted,
+		firstStockItemSent:          firstStockItemSent,
+		continueAfterFirstStockItem: continueAfterFirstStockItem,
+	})
 
 	go func() {
 		if err := server.Serve(listener); err != nil {
@@ -82,7 +125,7 @@ func startTestServer(
 
 func TestCheckStockUnauthenticated(t *testing.T) {
 	started := make(chan struct{}, 1)
-	client := startTestServer(t, started)
+	client := startTestServer(t, started, nil, nil)
 
 	// Deliberately use a context without authorization metadata.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -108,7 +151,7 @@ func TestCheckStockUnauthenticated(t *testing.T) {
 }
 
 func TestCheckStock(t *testing.T) {
-	client := startTestServer(t, nil)
+	client := startTestServer(t, nil, nil, nil)
 
 	tests := []struct {
 		name      string
@@ -149,7 +192,7 @@ func TestCheckStock(t *testing.T) {
 
 func TestCheckStockDeadline(t *testing.T) {
 	started := make(chan struct{}, 1)
-	client := startTestServer(t, started)
+	client := startTestServer(t, started, nil, nil)
 
 	ctx, cancel := context.WithTimeout(
 		context.Background(),
@@ -215,7 +258,7 @@ func TestCheckStockSlowOperationCancellation(t *testing.T) {
 }
 
 func TestCheckStockErrors(t *testing.T) {
-	client := startTestServer(t, nil)
+	client := startTestServer(t, nil, nil, nil)
 
 	tests := []struct {
 		name       string
@@ -302,5 +345,51 @@ func TestCorrelationIDFromContext(t *testing.T) {
 				t.Errorf("correlationIDFromContext() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestListStockCancellation(t *testing.T) {
+	firstStockItemSent := make(chan struct{}, 1)
+	continueAfterFirstStockItem := make(chan struct{})
+
+	client := startTestServer(
+		t,
+		nil,
+		firstStockItemSent,
+		continueAfterFirstStockItem,
+	)
+
+	ctx, cancel := context.WithCancel(authenticatedTestContext(t))
+	defer cancel()
+
+	stream, err := client.ListStock(
+		ctx,
+		&inventorypb.StockListRequest{},
+	)
+	if err != nil {
+		t.Fatalf("ListStock() error = %v", err)
+	}
+
+	item, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("first Recv() error = %v", err)
+	}
+
+	if got, want := item.GetProductId(), "keyboard"; got != want {
+		t.Fatalf("first item = %q, want %q", got, want)
+	}
+
+	select {
+	case <-firstStockItemSent:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for server to send the first item")
+	}
+
+	cancel()
+
+	_, err = stream.Recv()
+	if status.Code(err) != codes.Canceled {
+		t.Fatalf("Recv() error code = %v, want %v (error: %v)",
+			status.Code(err), codes.Canceled, err)
 	}
 }

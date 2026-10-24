@@ -17,8 +17,49 @@ import (
 type inventoryServer struct {
 	inventorypb.UnimplementedInventoryServiceServer
 
-	// slowOperationStarted optionally notifies observers without blocking requests.
-	slowOperationStarted chan<- struct{}
+	slowOperationStarted        chan<- struct{}
+	firstStockItemSent          chan<- struct{}
+	continueAfterFirstStockItem <-chan struct{}
+}
+
+func (s *inventoryServer) ListStock(
+	req *inventorypb.StockListRequest,
+	stream grpc.ServerStreamingServer[inventorypb.StockItem],
+) error {
+	items := []*inventorypb.StockItem{
+		{ProductId: "keyboard", Available: true},
+		{ProductId: "monitor", Available: false},
+		{ProductId: "mouse", Available: true},
+	}
+
+	for _, item := range items {
+		if err := stream.Context().Err(); err != nil {
+			return status.FromContextError(err).Err()
+		}
+
+		if err := stream.Send(item); err != nil {
+			return err
+		}
+
+		if item.GetProductId() == "keyboard" {
+			if s.firstStockItemSent != nil {
+				select {
+				case s.firstStockItemSent <- struct{}{}:
+				default:
+				}
+			}
+
+			if s.continueAfterFirstStockItem != nil {
+				select {
+				case <-s.continueAfterFirstStockItem:
+				case <-stream.Context().Done():
+					return status.FromContextError(stream.Context().Err()).Err()
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 func (s *inventoryServer) CheckStock(

@@ -351,3 +351,45 @@ The final full-suite and race-detector runs used cached successful test results.
 ### Lab Limitations
 
 The shared token is hard-coded for learning purposes, and the local client still uses insecure transport. This demonstrates authentication middleware and rejection behavior, not production credential management or transport security. It does not implement token expiry, rotation, identity claims, or authorization policies. Authentication establishes whether credentials are accepted; authorization determines what an authenticated caller may do.
+
+## Day 7 — Server Streaming Fundamentals
+
+### Objective and Protocol Buffers
+
+Implement and test a server-streaming RPC: one client request can receive multiple server responses.
+
+The service definition adds `ListStock`, which returns `stream StockItem`:
+
+```proto
+rpc ListStock(StockListRequest) returns (stream StockItem);
+```
+
+The Go Protobuf message types and gRPC client/server code were regenerated after updating the schema.
+
+### Sending Items and Handling Cancellation
+
+The server calls `stream.Send(item)` for each stock item individually, in order: `keyboard` with `available=true`, `monitor` with `available=false`, and `mouse` with `available=true`. A send error is returned immediately; normal completion returns nil.
+
+Before each send, the handler checks `stream.Context().Err()`. During the optional test coordination wait, it also selects on `stream.Context().Done()`. Context errors are mapped with `status.FromContextError`, preserving `Canceled` or `DeadlineExceeded`. Cancellation remains cooperative: the server must observe the stream context and stop its work.
+
+### Testing the Stream
+
+`TestListStock` calls the generated client's `ListStock` method with an empty `StockListRequest`, then repeatedly calls `Recv()`. `io.EOF` means normal stream completion; any other receive error fails the test. The test asserts exactly three items with the expected IDs, availability values, and order.
+
+`TestListStockCancellation` receives the first item and waits for the server's buffered `firstStockItemSent` notification. The server then waits on `continueAfterFirstStockItem` or context cancellation. The test cancels its context without releasing the continuation channel and checks that the next `Recv()` returns `codes.Canceled`.
+
+These channels coordinate cancellation after the first send without arbitrary sleeps. The notification wait has a timeout as a failure guard. The client-side cancellation assertion does not independently prove the server handler has returned; the server's context-aware wait provides the cancellation path.
+
+The streaming tests attach valid authorization metadata, but the existing interceptors are unary interceptors and do not run for `ListStock`. Stream authentication and other stream interceptors are outside this day's implementation.
+
+### Validation and Status
+
+The reported Day 7 validation results were successful:
+
+```bash
+go test ./grpc/fundamentals/...
+go test -race ./grpc/fundamentals/...
+go vet ./grpc/fundamentals/...
+```
+
+Status: Completed for the Day 7 server-streaming fundamentals lab.
