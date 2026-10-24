@@ -97,6 +97,7 @@ func main() {
 		grpc.ChainUnaryInterceptor(
 			loggingUnaryInterceptor,
 			tracingUnaryInterceptor,
+			authenticationUnaryInterceptor,
 		),
 	)
 	inventorypb.RegisterInventoryServiceServer(

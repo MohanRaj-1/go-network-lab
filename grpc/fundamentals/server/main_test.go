@@ -17,6 +17,20 @@ import (
 
 const bufSize = 1024 * 1024
 
+func authenticatedTestContext(
+	t *testing.T,
+) context.Context {
+	t.Helper()
+
+	ctx := context.Background()
+	md := metadata.Pairs(
+		"authorization",
+		"Bearer "+labAuthToken,
+	)
+
+	return metadata.NewOutgoingContext(ctx, md)
+}
+
 func startTestServer(
 	t *testing.T,
 	slowOperationStarted chan<- struct{},
@@ -28,6 +42,7 @@ func startTestServer(
 		grpc.ChainUnaryInterceptor(
 			loggingUnaryInterceptor,
 			tracingUnaryInterceptor,
+			authenticationUnaryInterceptor,
 		),
 	)
 
@@ -65,6 +80,33 @@ func startTestServer(
 	return inventorypb.NewInventoryServiceClient(conn)
 }
 
+func TestCheckStockUnauthenticated(t *testing.T) {
+	started := make(chan struct{}, 1)
+	client := startTestServer(t, started)
+
+	// Deliberately use a context without authorization metadata.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	_, err := client.CheckStock(ctx, &inventorypb.StockRequest{
+		ProductId: "slow-item",
+	})
+	if err == nil {
+		t.Fatal("CheckStock() error = nil, want unauthenticated")
+	}
+	if got := status.Code(err); got != codes.Unauthenticated {
+		t.Errorf("status.Code(err) = %s, want %s", got, codes.Unauthenticated)
+	}
+
+	// The handler sends synchronously into this buffer on entering the slow
+	// branch. After the rejected RPC returns, no notification should exist.
+	select {
+	case <-started:
+		t.Fatal("service handler was reached without authorization")
+	default:
+	}
+}
+
 func TestCheckStock(t *testing.T) {
 	client := startTestServer(t, nil)
 
@@ -81,9 +123,15 @@ func TestCheckStock(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(
 				context.Background(),
-				time.Second,
+				100*time.Millisecond,
 			)
 			defer cancel()
+
+			md := metadata.Pairs(
+				"authorization",
+				"Bearer "+labAuthToken,
+			)
+			ctx = metadata.NewOutgoingContext(ctx, md)
 
 			resp, err := client.CheckStock(ctx, &inventorypb.StockRequest{
 				ProductId: tt.productID,
@@ -108,6 +156,12 @@ func TestCheckStockDeadline(t *testing.T) {
 		100*time.Millisecond,
 	)
 	defer cancel()
+
+	md := metadata.Pairs(
+		"authorization",
+		"Bearer "+labAuthToken,
+	)
+	ctx = metadata.NewOutgoingContext(ctx, md)
 
 	_, err := client.CheckStock(ctx, &inventorypb.StockRequest{
 		ProductId: "slow-item",
@@ -189,9 +243,15 @@ func TestCheckStockErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(
 				context.Background(),
-				time.Second,
+				100*time.Millisecond,
 			)
 			defer cancel()
+
+			md := metadata.Pairs(
+				"authorization",
+				"Bearer "+labAuthToken,
+			)
+			ctx = metadata.NewOutgoingContext(ctx, md)
 
 			_, err := client.CheckStock(ctx, &inventorypb.StockRequest{
 				ProductId: tt.productID,

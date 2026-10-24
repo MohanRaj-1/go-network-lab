@@ -292,3 +292,62 @@ go test ./grpc/fundamentals/... -v
 go test ./grpc/fundamentals/... -race
 go vet ./grpc/fundamentals/...
 ```
+
+## Day 6 — Unary Authentication Interceptor
+
+### Reading and Validating Credentials
+
+`authenticationUnaryInterceptor` reads incoming metadata with `metadata.FromIncomingContext(ctx)` and retrieves the first `authorization` value. It requires the exact `Bearer ` prefix and a nonempty token matching `labAuthToken`.
+
+Missing incoming metadata, an absent authorization value, a malformed prefix, and an empty or incorrect token return `codes.Unauthenticated`. Only a valid token proceeds to `handler(ctx, req)`. Clients and tests inspect the status code rather than matching error messages.
+
+### Short-Circuiting the Chain
+
+The production server and the in-memory test server register the same chain:
+
+```go
+grpc.ChainUnaryInterceptor(
+    loggingUnaryInterceptor,
+    tracingUnaryInterceptor,
+    authenticationUnaryInterceptor,
+)
+```
+
+Logging and tracing wrap authentication. If authentication returns an error without calling its next handler, the inventory service is skipped. The outer interceptors still resume, allowing tracing to log its exit and logging to record the rejected RPC's completion and error.
+
+### Authenticated Client and Test Contexts
+
+The client attaches `authorization: Bearer lab-secret-token` using `metadata.NewOutgoingContext` on its existing one-second timeout context. Authenticated RPC tests also attach the valid token while retaining their deadlines. Authentication remains enabled in the test server; tests supply credentials rather than bypassing the interceptor.
+
+The current example client sends authorization metadata without a correlation ID, so request logs use the existing `"missing"` correlation ID fallback.
+
+### Unit and RPC Tests
+
+The focused authentication tests use incoming contexts directly:
+
+- A valid token calls the next handler, returns its known response, and produces no error.
+- Missing metadata returns `Unauthenticated` without calling the handler.
+- An incorrect token returns `Unauthenticated` without calling the handler.
+
+The interceptor also rejects malformed and empty credentials, but those branches do not yet have dedicated unit tests.
+
+`TestCheckStockUnauthenticated` exercises the actual server chain through the generated client and `bufconn`. It sends `slow-item` without authorization metadata, requires an error with status `Unauthenticated`, and checks the buffered `slowOperationStarted` channel after the RPC returns. The empty buffer confirms that the slow-operation branch was not reached, without a sleep or reliance on log output.
+
+That notification is specific to the slow branch, rather than an independent observation of every handler entry. The authentication interceptor's early return and its unit tests establish that the next handler is not invoked for rejected credentials. Existing authenticated stock, validation, and deadline RPC tests continue to pass. The direct handler-cancellation test bypasses authentication and the other interceptors.
+
+### Validation
+
+The final Day 6 validation passed with these commands:
+
+```bash
+go test ./grpc/fundamentals/... -v
+go test ./grpc/fundamentals/... -race
+go vet ./grpc/fundamentals/...
+git diff --check
+```
+
+The final full-suite and race-detector runs used cached successful test results. Vet reported no issues, and the whitespace check passed.
+
+### Lab Limitations
+
+The shared token is hard-coded for learning purposes, and the local client still uses insecure transport. This demonstrates authentication middleware and rejection behavior, not production credential management or transport security. It does not implement token expiry, rotation, identity claims, or authorization policies. Authentication establishes whether credentials are accepted; authorization determines what an authenticated caller may do.

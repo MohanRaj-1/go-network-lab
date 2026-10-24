@@ -30,9 +30,9 @@ func main() {
 	defer cancel()
 
 	md := metadata.Pairs(
-		"x-correlation-id", "req-12345",
+		"authorization",
+		"Bearer lab-secret-token",
 	)
-
 	ctx = metadata.NewOutgoingContext(ctx, md)
 
 	_, err = client.CheckStock(ctx, &inventorypb.StockRequest{
