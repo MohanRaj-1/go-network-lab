@@ -583,3 +583,133 @@ git status --short
 ```
 
 Vet reported no issues and the whitespace check passed. I reviewed the working tree to confirm the server and test changes for this milestone. Streaming interceptors remain scheduled for Day 12; the existing unary interceptors still do not apply to streaming RPCs.
+
+## Day 12: Stream Interceptors and Interceptor Chaining
+
+### 1. Unary vs. Stream Interceptors
+
+gRPC provides different interceptor mechanisms for unary and streaming RPCs.
+
+- **Unary interceptor:** Intercepts a single request-response RPC using `grpc.UnaryServerInterceptor`.
+- **Stream interceptor:** Intercepts a streaming RPC using `grpc.StreamServerInterceptor`.
+
+Registering a unary interceptor does not automatically apply it to streaming RPCs. Stream interceptors must be registered separately.
+
+### 2. Stream Interceptor Signature
+
+```go
+func(
+    srv any,
+    ss grpc.ServerStream,
+    info *grpc.StreamServerInfo,
+    handler grpc.StreamHandler,
+) error
+```
+
+- `srv`: The service implementation.
+- `ss`: The server stream used by the RPC.
+- `info`: Metadata about the RPC, including its full method name.
+- `handler`: Invokes the next handler in the chain, eventually reaching the service implementation.
+
+A stream interceptor can perform work before and after calling the next handler.
+
+### 3. Stream Logging Interceptor
+
+The logging stream interceptor records when a streaming RPC starts and completes. It captures the method name, duration, and returned error.
+
+```go
+start := time.Now()
+log.Printf("rpc stream started: method=%s", info.FullMethod)
+
+err := handler(srv, ss)
+
+log.Printf(
+    "rpc stream completed: method=%s duration=%s error=%v",
+    info.FullMethod,
+    time.Since(start),
+    err,
+)
+
+return err
+```
+
+This logs the overall RPC lifecycle. It does not automatically log every message sent or received.
+
+Returning the original error preserves the handler's result for gRPC.
+
+### 4. Stream Tracing Interceptor
+
+The tracing interceptor logs entry into and exit from a streaming RPC.
+
+```go
+log.Printf("TRACE: entering %s", info.FullMethod)
+
+err := handler(srv, ss)
+
+log.Printf("TRACE: exiting %s", info.FullMethod)
+
+return err
+```
+
+This provides a simple way to observe when a streaming handler begins and finishes.
+
+### 5. Registering and Chaining Stream Interceptors
+
+Stream interceptors can be registered using `grpc.ChainStreamInterceptor`.
+
+```go
+grpc.NewServer(
+    grpc.ChainUnaryInterceptor(
+        loggingUnaryInterceptor,
+        tracingUnaryInterceptor,
+        authenticationUnaryInterceptor,
+    ),
+    grpc.ChainStreamInterceptor(
+        loggingStreamInterceptor,
+        tracingStreamInterceptor,
+    ),
+)
+```
+
+Unary and stream interceptor chains are configured separately.
+
+For the stream chain, the expected execution order is:
+
+1. Logging interceptor begins.
+2. Tracing interceptor begins.
+3. Service handler executes.
+4. Tracing interceptor finishes.
+5. Logging interceptor finishes.
+
+The outer interceptor runs its pre-handler logic first and its post-handler logic last.
+
+### 6. Testing Interceptor Execution Order
+
+A focused unit test can simulate nested interceptor calls and record their execution sequence.
+
+Expected order:
+
+```text
+logging: before
+tracing: before
+service
+tracing: after
+logging: after
+```
+
+This test verifies the nesting behavior. It does not itself invoke `grpc.ChainStreamInterceptor`, so integration tests using a real gRPC server are also useful for validating actual registration and behavior.
+
+### 7. Error Propagation and Cancellation
+
+An interceptor should normally return the error produced by the next handler rather than silently replacing or swallowing it.
+
+The post-handler logging still executes when the handler returns an error. For example, a cancelled streaming RPC can be logged with its cancellation error.
+
+### Key Takeaways
+
+- Unary and stream interceptors use different APIs.
+- Stream interceptors wrap the lifecycle of a streaming RPC.
+- Logging and tracing can be chained around the service handler.
+- Interceptor order determines the order of pre-handler and post-handler operations.
+- Unit tests can verify nesting, while integration tests validate the registered chain.
+- Interceptors should preserve the handler's returned error unless intentionally applying a documented error transformation.

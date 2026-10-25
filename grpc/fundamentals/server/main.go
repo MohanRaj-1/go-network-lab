@@ -212,6 +212,10 @@ func main() {
 			tracingUnaryInterceptor,
 			authenticationUnaryInterceptor,
 		),
+		grpc.ChainStreamInterceptor(
+			loggingStreamInterceptor,
+			tracingStreamInterceptor,
+		),
 	)
 	inventorypb.RegisterInventoryServiceServer(
 		server,
