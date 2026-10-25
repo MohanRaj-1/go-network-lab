@@ -18,6 +18,72 @@ import (
 
 const bufSize = 1024 * 1024
 
+func TestSyncStockCancellation(t *testing.T) {
+	client := startTestServer(t, nil, nil, nil)
+	ctx, cancel := context.WithCancel(authenticatedTestContext(t))
+	defer cancel()
+
+	stream, err := client.SyncStock(ctx)
+	if err != nil {
+		t.Fatalf("SyncStock() error = %v", err)
+	}
+
+	// This checks client-side stream cancellation without assuming the server
+	// handler has started or independently proving that it has returned.
+	cancel()
+	_, err = stream.Recv()
+	if got := status.Code(err); got != codes.Canceled {
+		t.Fatalf("Recv() error code = %s, want %s (error: %v)", got, codes.Canceled, err)
+	}
+}
+
+func TestSyncStock(t *testing.T) {
+	client := startTestServer(t, nil, nil, nil)
+	ctx, cancel := context.WithTimeout(authenticatedTestContext(t), 5*time.Second)
+	defer cancel()
+
+	stream, err := client.SyncStock(ctx)
+	if err != nil {
+		t.Fatalf("SyncStock() error = %v", err)
+	}
+
+	want := []*inventorypb.StockItem{
+		{ProductId: "keyboard", Available: true},
+		{ProductId: "monitor", Available: false},
+		{ProductId: "mouse", Available: true},
+	}
+	for _, item := range want {
+		if err := stream.Send(item); err != nil {
+			t.Fatalf("Send(%q) error = %v", item.GetProductId(), err)
+		}
+	}
+	if err := stream.CloseSend(); err != nil {
+		t.Fatalf("CloseSend() error = %v", err)
+	}
+
+	var got []*inventorypb.StockItem
+	for {
+		item, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv() error = %v", err)
+		}
+		got = append(got, item)
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("received %d responses, want %d", len(got), len(want))
+	}
+	for i, item := range got {
+		if item.GetProductId() != want[i].GetProductId() || item.GetAvailable() != want[i].GetAvailable() {
+			t.Errorf("response[%d] = (%q, %t), want (%q, %t)",
+				i, item.GetProductId(), item.GetAvailable(), want[i].GetProductId(), want[i].GetAvailable())
+		}
+	}
+}
+
 func TestListStock(t *testing.T) {
 	client := startTestServer(t, nil, nil, nil)
 	ctx, cancel := context.WithTimeout(authenticatedTestContext(t), 10*time.Second)

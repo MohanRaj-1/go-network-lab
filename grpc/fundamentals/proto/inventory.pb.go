@@ -266,12 +266,13 @@ const file_grpc_fundamentals_proto_inventory_proto_rawDesc = "" +
 	"\tavailable\x18\x02 \x01(\bR\tavailable\"e\n" +
 	"\x13StockReportResponse\x12%\n" +
 	"\x0ereceived_count\x18\x01 \x01(\x05R\rreceivedCount\x12'\n" +
-	"\x0favailable_count\x18\x02 \x01(\x05R\x0eavailableCount2\xee\x01\n" +
+	"\x0favailable_count\x18\x02 \x01(\x05R\x0eavailableCount2\xb1\x02\n" +
 	"\x10InventoryService\x12E\n" +
 	"\n" +
 	"CheckStock\x12\x1a.inventory.v1.StockRequest\x1a\x1b.inventory.v1.StockResponse\x12F\n" +
 	"\tListStock\x12\x1e.inventory.v1.StockListRequest\x1a\x17.inventory.v1.StockItem0\x01\x12K\n" +
-	"\vReportStock\x12\x17.inventory.v1.StockItem\x1a!.inventory.v1.StockReportResponse(\x01BJZHgithub.com/MohanRaj-1/go-network-lab/grpc/fundamentals/proto;inventorypbb\x06proto3"
+	"\vReportStock\x12\x17.inventory.v1.StockItem\x1a!.inventory.v1.StockReportResponse(\x01\x12A\n" +
+	"\tSyncStock\x12\x17.inventory.v1.StockItem\x1a\x17.inventory.v1.StockItem(\x010\x01BJZHgithub.com/MohanRaj-1/go-network-lab/grpc/fundamentals/proto;inventorypbb\x06proto3"
 
 var (
 	file_grpc_fundamentals_proto_inventory_proto_rawDescOnce sync.Once
@@ -297,11 +298,13 @@ var file_grpc_fundamentals_proto_inventory_proto_depIdxs = []int32{
 	0, // 0: inventory.v1.InventoryService.CheckStock:input_type -> inventory.v1.StockRequest
 	2, // 1: inventory.v1.InventoryService.ListStock:input_type -> inventory.v1.StockListRequest
 	3, // 2: inventory.v1.InventoryService.ReportStock:input_type -> inventory.v1.StockItem
-	1, // 3: inventory.v1.InventoryService.CheckStock:output_type -> inventory.v1.StockResponse
-	3, // 4: inventory.v1.InventoryService.ListStock:output_type -> inventory.v1.StockItem
-	4, // 5: inventory.v1.InventoryService.ReportStock:output_type -> inventory.v1.StockReportResponse
-	3, // [3:6] is the sub-list for method output_type
-	0, // [0:3] is the sub-list for method input_type
+	3, // 3: inventory.v1.InventoryService.SyncStock:input_type -> inventory.v1.StockItem
+	1, // 4: inventory.v1.InventoryService.CheckStock:output_type -> inventory.v1.StockResponse
+	3, // 5: inventory.v1.InventoryService.ListStock:output_type -> inventory.v1.StockItem
+	4, // 6: inventory.v1.InventoryService.ReportStock:output_type -> inventory.v1.StockReportResponse
+	3, // 7: inventory.v1.InventoryService.SyncStock:output_type -> inventory.v1.StockItem
+	4, // [4:8] is the sub-list for method output_type
+	0, // [0:4] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name

@@ -22,6 +22,7 @@ const (
 	InventoryService_CheckStock_FullMethodName  = "/inventory.v1.InventoryService/CheckStock"
 	InventoryService_ListStock_FullMethodName   = "/inventory.v1.InventoryService/ListStock"
 	InventoryService_ReportStock_FullMethodName = "/inventory.v1.InventoryService/ReportStock"
+	InventoryService_SyncStock_FullMethodName   = "/inventory.v1.InventoryService/SyncStock"
 )
 
 // InventoryServiceClient is the client API for InventoryService service.
@@ -31,6 +32,7 @@ type InventoryServiceClient interface {
 	CheckStock(ctx context.Context, in *StockRequest, opts ...grpc.CallOption) (*StockResponse, error)
 	ListStock(ctx context.Context, in *StockListRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StockItem], error)
 	ReportStock(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[StockItem, StockReportResponse], error)
+	SyncStock(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[StockItem, StockItem], error)
 }
 
 type inventoryServiceClient struct {
@@ -83,6 +85,19 @@ func (c *inventoryServiceClient) ReportStock(ctx context.Context, opts ...grpc.C
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type InventoryService_ReportStockClient = grpc.ClientStreamingClient[StockItem, StockReportResponse]
 
+func (c *inventoryServiceClient) SyncStock(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[StockItem, StockItem], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &InventoryService_ServiceDesc.Streams[2], InventoryService_SyncStock_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StockItem, StockItem]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type InventoryService_SyncStockClient = grpc.BidiStreamingClient[StockItem, StockItem]
+
 // InventoryServiceServer is the server API for InventoryService service.
 // All implementations must embed UnimplementedInventoryServiceServer
 // for forward compatibility.
@@ -90,6 +105,7 @@ type InventoryServiceServer interface {
 	CheckStock(context.Context, *StockRequest) (*StockResponse, error)
 	ListStock(*StockListRequest, grpc.ServerStreamingServer[StockItem]) error
 	ReportStock(grpc.ClientStreamingServer[StockItem, StockReportResponse]) error
+	SyncStock(grpc.BidiStreamingServer[StockItem, StockItem]) error
 	mustEmbedUnimplementedInventoryServiceServer()
 }
 
@@ -108,6 +124,9 @@ func (UnimplementedInventoryServiceServer) ListStock(*StockListRequest, grpc.Ser
 }
 func (UnimplementedInventoryServiceServer) ReportStock(grpc.ClientStreamingServer[StockItem, StockReportResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method ReportStock not implemented")
+}
+func (UnimplementedInventoryServiceServer) SyncStock(grpc.BidiStreamingServer[StockItem, StockItem]) error {
+	return status.Errorf(codes.Unimplemented, "method SyncStock not implemented")
 }
 func (UnimplementedInventoryServiceServer) mustEmbedUnimplementedInventoryServiceServer() {}
 func (UnimplementedInventoryServiceServer) testEmbeddedByValue()                          {}
@@ -166,6 +185,13 @@ func _InventoryService_ReportStock_Handler(srv interface{}, stream grpc.ServerSt
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type InventoryService_ReportStockServer = grpc.ClientStreamingServer[StockItem, StockReportResponse]
 
+func _InventoryService_SyncStock_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(InventoryServiceServer).SyncStock(&grpc.GenericServerStream[StockItem, StockItem]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type InventoryService_SyncStockServer = grpc.BidiStreamingServer[StockItem, StockItem]
+
 // InventoryService_ServiceDesc is the grpc.ServiceDesc for InventoryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -187,6 +213,12 @@ var InventoryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ReportStock",
 			Handler:       _InventoryService_ReportStock_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "SyncStock",
+			Handler:       _InventoryService_SyncStock_Handler,
+			ServerStreams: true,
 			ClientStreams: true,
 		},
 	},

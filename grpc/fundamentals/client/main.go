@@ -67,6 +67,10 @@ func main() {
 	if err := reportStock(streamCtx, client); err != nil {
 		log.Printf("ReportStock failed: %v", err)
 	}
+
+	if err := syncStock(streamCtx, client); err != nil {
+		log.Printf("SyncStock failed: %v", err)
+	}
 }
 
 func listStock(
@@ -177,4 +181,40 @@ func reportStock(
 	)
 
 	return nil
+}
+
+func syncStock(
+	ctx context.Context,
+	client inventorypb.InventoryServiceClient,
+) error {
+	stream, err := client.SyncStock(ctx)
+	if err != nil {
+		return fmt.Errorf("start stock sync: %w", err)
+	}
+
+	items := []*inventorypb.StockItem{
+		{ProductId: "keyboard", Available: true},
+		{ProductId: "monitor", Available: false},
+		{ProductId: "mouse", Available: true},
+	}
+	for _, item := range items {
+		if err := stream.Send(item); err != nil {
+			return fmt.Errorf("send stock sync item %q: %w", item.GetProductId(), err)
+		}
+	}
+	if err := stream.CloseSend(); err != nil {
+		return fmt.Errorf("close stock sync send direction: %w", err)
+	}
+
+	for {
+		item, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("receive stock sync item: %w", err)
+		}
+		log.Printf("Synced product: %s, Available: %t",
+			item.GetProductId(), item.GetAvailable())
+	}
 }

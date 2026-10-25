@@ -478,3 +478,43 @@ The reported Day 9 validation results were successful:
 Client streaming is useful when a client needs to submit multiple messages and receive a single aggregated result, such as a batch report or a collection of telemetry records.
 
 Lab note: The current authentication, logging, and tracing interceptors are unary interceptors. They do not automatically apply to streaming RPCs.
+
+## Day 10 — Bidirectional Streaming RPC
+
+### Objective
+
+Implement an RPC where the client and server can both send multiple messages over a single stream.
+
+### What I Implemented
+
+- Added the `SyncStock` RPC to `inventory.proto`.
+- Regenerated the Go Protobuf and gRPC code.
+- Implemented the server handler to receive stock items and send each item back to the client.
+- Implemented the client to send multiple stock items, call `CloseSend()`, and receive responses until `io.EOF`.
+- Added an end-to-end example demonstrating three stock items sent and received.
+- Added automated tests for normal completion and client-observed cancellation.
+
+### Bidirectional Streaming Lifecycle
+
+1. The client opens the stream.
+2. The client sends multiple messages using `Send()`.
+3. The server receives messages using `Recv()` and sends responses using `Send()`.
+4. The client calls `CloseSend()` when it has finished sending.
+5. The client continues receiving responses until `io.EOF` or an error occurs.
+
+### Validation
+
+The reported Day 10 validation results were successful:
+
+- `go test ./grpc/fundamentals/...` passed.
+- `go test -race ./grpc/fundamentals/...` passed.
+- `go vet ./grpc/fundamentals/...` passed.
+- `git diff --check` reported no whitespace errors.
+
+### Key Learning
+
+Bidirectional streaming supports independent sending and receiving directions within one RPC. Closing the client's sending direction does not close the receiving direction.
+
+Testing note: The cancellation test verifies that the client observes cancellation. It does not independently prove that the server handler has stopped processing.
+
+Lab note: The existing authentication, logging, and tracing interceptors are unary interceptors and do not automatically apply to streaming RPCs.

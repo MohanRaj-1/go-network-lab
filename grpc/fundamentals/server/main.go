@@ -23,6 +23,27 @@ type inventoryServer struct {
 	continueAfterFirstStockItem <-chan struct{}
 }
 
+func (s *inventoryServer) SyncStock(
+	stream grpc.BidiStreamingServer[inventorypb.StockItem, inventorypb.StockItem],
+) error {
+	for {
+		item, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		log.Printf("SyncStock received product: %q, available: %t",
+			item.GetProductId(), item.GetAvailable())
+
+		if err := stream.Send(item); err != nil {
+			return err
+		}
+	}
+}
+
 func (s *inventoryServer) ListStock(
 	req *inventorypb.StockListRequest,
 	stream grpc.ServerStreamingServer[inventorypb.StockItem],
