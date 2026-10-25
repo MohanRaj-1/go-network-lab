@@ -19,7 +19,10 @@ import (
 const bufSize = 1024 * 1024
 
 func TestSyncStockCancellation(t *testing.T) {
-	client := startTestServer(t, nil, nil, nil)
+	syncStockItemReceived := make(chan struct{}, 1)
+	continueAfterSyncStockItem := make(chan struct{})
+	client := startTestServer(t, nil, nil, nil, syncStockItemReceived, continueAfterSyncStockItem)
+
 	ctx, cancel := context.WithCancel(authenticatedTestContext(t))
 	defer cancel()
 
@@ -28,17 +31,31 @@ func TestSyncStockCancellation(t *testing.T) {
 		t.Fatalf("SyncStock() error = %v", err)
 	}
 
-	// This checks client-side stream cancellation without assuming the server
-	// handler has started or independently proving that it has returned.
+	if err := stream.Send(&inventorypb.StockItem{
+		ProductId: "keyboard",
+		Available: true,
+	}); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+
+	select {
+	case <-syncStockItemReceived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not receive the stock item before timeout")
+	}
+
+	// Leave the gate unreleased so no echo can race with cancellation.
 	cancel()
+
 	_, err = stream.Recv()
 	if got := status.Code(err); got != codes.Canceled {
-		t.Fatalf("Recv() error code = %s, want %s (error: %v)", got, codes.Canceled, err)
+		t.Fatalf("Recv() error code = %s, want %s (error: %v)",
+			got, codes.Canceled, err)
 	}
 }
 
 func TestSyncStock(t *testing.T) {
-	client := startTestServer(t, nil, nil, nil)
+	client := startTestServer(t, nil, nil, nil, nil, nil)
 	ctx, cancel := context.WithTimeout(authenticatedTestContext(t), 5*time.Second)
 	defer cancel()
 
@@ -85,7 +102,7 @@ func TestSyncStock(t *testing.T) {
 }
 
 func TestListStock(t *testing.T) {
-	client := startTestServer(t, nil, nil, nil)
+	client := startTestServer(t, nil, nil, nil, nil, nil)
 	ctx, cancel := context.WithTimeout(authenticatedTestContext(t), 10*time.Second)
 	defer cancel()
 
@@ -144,6 +161,8 @@ func startTestServer(
 	slowOperationStarted chan<- struct{},
 	firstStockItemSent chan<- struct{},
 	continueAfterFirstStockItem <-chan struct{},
+	syncStockItemReceived chan<- struct{},
+	continueAfterSyncStockItem <-chan struct{},
 ) inventorypb.InventoryServiceClient {
 	t.Helper()
 
@@ -160,6 +179,8 @@ func startTestServer(
 		slowOperationStarted:        slowOperationStarted,
 		firstStockItemSent:          firstStockItemSent,
 		continueAfterFirstStockItem: continueAfterFirstStockItem,
+		syncStockItemReceived:       syncStockItemReceived,
+		continueAfterSyncStockItem:  continueAfterSyncStockItem,
 	})
 
 	go func() {
@@ -191,7 +212,7 @@ func startTestServer(
 
 func TestCheckStockUnauthenticated(t *testing.T) {
 	started := make(chan struct{}, 1)
-	client := startTestServer(t, started, nil, nil)
+	client := startTestServer(t, started, nil, nil, nil, nil)
 
 	// Deliberately use a context without authorization metadata.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -217,7 +238,7 @@ func TestCheckStockUnauthenticated(t *testing.T) {
 }
 
 func TestCheckStock(t *testing.T) {
-	client := startTestServer(t, nil, nil, nil)
+	client := startTestServer(t, nil, nil, nil, nil, nil)
 
 	tests := []struct {
 		name      string
@@ -258,7 +279,7 @@ func TestCheckStock(t *testing.T) {
 
 func TestCheckStockDeadline(t *testing.T) {
 	started := make(chan struct{}, 1)
-	client := startTestServer(t, started, nil, nil)
+	client := startTestServer(t, started, nil, nil, nil, nil)
 
 	ctx, cancel := context.WithTimeout(
 		context.Background(),
@@ -324,7 +345,7 @@ func TestCheckStockSlowOperationCancellation(t *testing.T) {
 }
 
 func TestCheckStockErrors(t *testing.T) {
-	client := startTestServer(t, nil, nil, nil)
+	client := startTestServer(t, nil, nil, nil, nil, nil)
 
 	tests := []struct {
 		name       string
@@ -423,6 +444,8 @@ func TestListStockCancellation(t *testing.T) {
 		nil,
 		firstStockItemSent,
 		continueAfterFirstStockItem,
+		nil,
+		nil,
 	)
 
 	ctx, cancel := context.WithCancel(authenticatedTestContext(t))
@@ -461,7 +484,7 @@ func TestListStockCancellation(t *testing.T) {
 }
 
 func TestReportStock(t *testing.T) {
-	client := startTestServer(t, nil, nil, nil)
+	client := startTestServer(t, nil, nil, nil, nil, nil)
 
 	tests := []struct {
 		name               string

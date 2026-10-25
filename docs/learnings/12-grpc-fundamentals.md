@@ -112,7 +112,7 @@ The handler retains `status.FromContextError(err).Err()` to map `context.Deadlin
 
 `TestCheckStockErrors` covers empty IDs, whitespace-only IDs, and unknown products through the in-memory gRPC server. The existing `monitor` test requires a successful RPC before checking `available=false`, explicitly distinguishing unavailable stock from a missing product. The deadline and explicit handler-cancellation tests continue to cover their separate behaviors.
 
-The supplied Day 2 validation output shows all three checks passed:
+I ran all three checks for Day 2, and they passed:
 
 ```bash
 go test ./grpc/fundamentals/... -v
@@ -157,7 +157,7 @@ Extracting the helper removed the test-specific `correlationIDObserved` field an
 
 ### Validation
 
-The supplied post-refactor validation output shows the tests, race-detector check, and vet check passed:
+After refactoring, I ran the tests, race-detector check, and vet check, and they passed:
 
 ```bash
 go test ./grpc/fundamentals/... -v
@@ -204,7 +204,7 @@ The in-memory test server is a separate server instance. Registering the interce
 
 ### Observed Request Lifecycle
 
-The supplied verbose test output shows one interceptor start entry and one completion entry for each RPC that returns. Completion logs include errors such as `InvalidArgument`, `NotFound`, and `DeadlineExceeded`, as well as `error=<nil>` for successful calls.
+In the verbose test logs, I observed one interceptor start entry and one completion entry for each RPC that returns. Completion logs include errors such as `InvalidArgument`, `NotFound`, and `DeadlineExceeded`, as well as `error=<nil>` for successful calls.
 
 In the deadline run, the start log precedes the handler's cancellation log, followed by a completion log containing the handler's `DeadlineExceeded` error. The duration measures time around the handler call and logging; it is not an end-to-end client latency measurement.
 
@@ -221,7 +221,7 @@ These unit tests check the interceptor's contract in isolation. The existing in-
 
 ### Validation
 
-The supplied Day 4 validation output shows all three checks passed:
+I ran all three checks for Day 4, and they passed:
 
 ```bash
 go test ./grpc/fundamentals/... -v
@@ -268,7 +268,7 @@ The observed RPC logs show `rpc started`, `TRACE: entering`, `TRACE: exiting`, a
 
 ### Errors and Short-Circuiting
 
-A returned error does not prevent the code after `handler(ctx, req)` from running. The tracing interceptor logs its exit, then returns the error unchanged; the outer logging interceptor records the returned error and completes. The supplied RPC output demonstrates this for `InvalidArgument`, `NotFound`, and deadline cancellation.
+A returned error does not prevent the code after `handler(ctx, req)` from running. The tracing interceptor logs its exit, then returns the error unchanged; the outer logging interceptor records the returned error and completes. I observed this behavior for `InvalidArgument`, `NotFound`, and deadline cancellation in the RPC logs.
 
 An interceptor can short-circuit the remaining chain by returning without invoking its next handler. Later interceptors and the service handler are then skipped. An outer interceptor that already called this inner interceptor can still resume after it returns. This describes ordinary returns, including errors; neither lab interceptor recovers panics.
 
@@ -279,13 +279,13 @@ The manual deadline experiment also showed different client and server perspecti
 - `TestTracingUnaryInterceptor` verifies that the next handler is called and its successful response is returned without an added error.
 - `TestTracingUnaryInterceptorPassesThroughError` verifies that the exact original handler error is returned without replacement or wrapping.
 - `TestUnaryInterceptorExecutionOrder` uses a sequence slice to assert manually nested interceptor execution. It demonstrates nesting without relying on log formatting, but does not invoke `grpc.ChainUnaryInterceptor` or the production interceptors.
-- The existing RPC tests use `bufconn` with the actual logging and tracing chain registered. Their supplied verbose output shows both interceptors running while stock, validation, and deadline behavior remains intact. Execution order in this RPC path was inspected through logs rather than asserted by a sequence test.
+- The existing RPC tests use `bufconn` with the actual logging and tracing chain registered. I checked the verbose logs to confirm that both interceptors ran while stock, validation, and deadline behavior remained intact. I inspected execution order in this RPC path through logs rather than asserting it with a sequence test.
 
 `TestCheckStockSlowOperationCancellation` continues to call the service method directly and bypasses both interceptors.
 
 ### Validation
 
-The supplied Day 5 output shows the full test suite, race-detector check, and vet check passed after registering the chain in the test server:
+After registering the chain in the test server, I ran the full test suite, race-detector check, and vet check, and they passed:
 
 ```bash
 go test ./grpc/fundamentals/... -v
@@ -337,7 +337,7 @@ That notification is specific to the slow branch, rather than an independent obs
 
 ### Validation
 
-The final Day 6 validation passed with these commands:
+I ran these commands for the final Day 6 validation, and they passed:
 
 ```bash
 go test ./grpc/fundamentals/... -v
@@ -384,7 +384,7 @@ The streaming tests attach valid authorization metadata, but the existing interc
 
 ### Validation and Status
 
-The reported Day 7 validation results were successful:
+I ran these checks for Day 7, and they passed:
 
 ```bash
 go test ./grpc/fundamentals/...
@@ -426,7 +426,7 @@ As recorded in Day 7, the client-side receive assertion does not independently c
 
 ### Validation
 
-The supplied Day 8 output shows formatting, tests, race detection, vet, and the whitespace check completed successfully:
+I formatted the client and ran the tests, race detector, vet, and whitespace check successfully:
 
 ```bash
 gofmt -w grpc/fundamentals/client/main.go
@@ -466,7 +466,7 @@ Implement a client-streaming RPC in which the client sends multiple messages and
 
 ### Validation
 
-The reported Day 9 validation results were successful:
+I completed the Day 9 validation successfully:
 
 - `gofmt` completed successfully.
 - `go test ./grpc/fundamentals/...` passed.
@@ -504,7 +504,7 @@ Implement an RPC where the client and server can both send multiple messages ove
 
 ### Validation
 
-The reported Day 10 validation results were successful:
+I ran the Day 10 validation checks successfully:
 
 - `go test ./grpc/fundamentals/...` passed.
 - `go test -race ./grpc/fundamentals/...` passed.
@@ -518,3 +518,68 @@ Bidirectional streaming supports independent sending and receiving directions wi
 Testing note: The cancellation test verifies that the client observes cancellation. It does not independently prove that the server handler has stopped processing.
 
 Lab note: The existing authentication, logging, and tracing interceptors are unary interceptors and do not automatically apply to streaming RPCs.
+
+## Day 11 — Streaming Errors, Cancellation, and Backpressure
+
+### Receive and Send Errors
+
+Streaming handlers and clients check errors from both `Recv()` and `Send()`. A failed operation must not be treated as a successfully processed message. The lab returns server send and receive errors to gRPC and wraps client errors with useful operation context.
+
+Normal completion and cancellation have different meanings:
+
+| Signal | Meaning in this lab |
+| --- | --- |
+| `io.EOF` from `Recv()` | The peer finished sending normally. The server can finish its handler, and the client can finish consuming the stream. |
+| `codes.Canceled` | The RPC was cancelled, such as by an explicit client `cancel()` call. |
+| `codes.DeadlineExceeded` | The RPC exceeded its deadline from the observing side's perspective. |
+
+`io.EOF` handling belongs to the receive lifecycle; it is not a blanket rule that any send error means successful completion. Context errors are mapped with `status.FromContextError` where the handler checks its context. Tests inspect gRPC status codes rather than error strings. A client may report its expired deadline while the server observes `context.Canceled`; the two sides need not report identical context errors.
+
+### Coordinating Bidirectional Stream Cancellation
+
+The optional `syncStockItemReceived chan<- struct{}` field on `inventoryServer` provides a notification immediately after `SyncStock` successfully receives a stock item, before logging or echoing it. A nil check and non-blocking send keep normal requests from waiting for an observer. `startTestServer` passes the channel through to the server; tests that do not use it pass nil.
+
+`TestSyncStockCancellation` uses a channel buffered for one notification and follows this sequence:
+
+1. Open a stream and send an available `keyboard` item.
+2. Wait for the server's receive notification, with a five-second timeout as a failure guard.
+3. Leave `continueAfterSyncStockItem` unreleased (neither send nor close): the server waits on this gate or its stream context before echoing the item.
+4. Cancel the client context without releasing the gate.
+5. Check that the client receives a `Canceled` status.
+
+The notification establishes that the server received a real message before cancellation was requested, without an arbitrary sleep. It does not establish when the handler exits or prove that cancellation interrupted a blocked server receive. The hook notifies after every successful receive; this test sends one item and uses its first notification.
+
+I added the optional `continueAfterSyncStockItem` gate after the receive notification and before the echo to fix a race in the original test. A receive notification alone allowed an echo to reach the client before cancellation, so the next `Recv()` could return an item instead of `Canceled`. The test now leaves the gate unreleased, preventing that echo. The handler's wait observes `stream.Context().Done()` and returns the mapped context error. Production leaves the gate nil and does not wait. The client assertion still does not independently confirm handler exit.
+
+### Flow Control and Application Backpressure
+
+A successful `stream.Send(item)` does not prove that the remote service processed the item or acknowledged it at the application level. Sending is affected by buffering and available transport capacity; a producer can eventually have to wait when the consumer is slower.
+
+| Mechanism | What it controls |
+| --- | --- |
+| HTTP/2 flow control | Data transmission within stream and connection flow-control windows. |
+| gRPC send and receive operations | Message transfer through the RPC API, subject to buffering and transport constraints. |
+| Application-level backpressure | How much work is accepted, queued, processed, and acknowledged. |
+
+Transport flow control does not automatically bound application queues. A server could receive messages quickly and enqueue work without a limit, allowing memory use to grow even while transport flow control is functioning.
+
+Bounded queues, limits on outstanding work, or explicit application acknowledgments can control that growth. At capacity, an application must make producers wait, slow down, or reject work according to its contract. Day 11 covers these design distinctions; it does not add a backpressure benchmark, tune HTTP/2 windows, or implement an acknowledgment protocol.
+
+### Validation and Scope
+
+After adding synchronization, I ran these checks and both passed:
+
+```bash
+go test ./grpc/fundamentals/...
+go test -race ./grpc/fundamentals/...
+```
+
+I ran the remaining checks before documenting Day 11:
+
+```bash
+go vet ./grpc/fundamentals/...
+git diff --check
+git status --short
+```
+
+Vet reported no issues and the whitespace check passed. I reviewed the working tree to confirm the server and test changes for this milestone. Streaming interceptors remain scheduled for Day 12; the existing unary interceptors still do not apply to streaming RPCs.

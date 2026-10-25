@@ -21,6 +21,8 @@ type inventoryServer struct {
 	slowOperationStarted        chan<- struct{}
 	firstStockItemSent          chan<- struct{}
 	continueAfterFirstStockItem <-chan struct{}
+	syncStockItemReceived       chan<- struct{}
+	continueAfterSyncStockItem  <-chan struct{}
 }
 
 func (s *inventoryServer) SyncStock(
@@ -33,6 +35,21 @@ func (s *inventoryServer) SyncStock(
 		}
 		if err != nil {
 			return err
+		}
+
+		if s.syncStockItemReceived != nil {
+			select {
+			case s.syncStockItemReceived <- struct{}{}:
+			default:
+			}
+		}
+
+		if s.continueAfterSyncStockItem != nil {
+			select {
+			case <-s.continueAfterSyncStockItem:
+			case <-stream.Context().Done():
+				return status.FromContextError(stream.Context().Err()).Err()
+			}
 		}
 
 		log.Printf("SyncStock received product: %q, available: %t",
