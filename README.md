@@ -241,9 +241,54 @@ The experiments use a local, unencrypted `ws://` connection rather than a custom
 Detailed observations, the ping-timeout investigation, and limitations are in
 [`docs/learnings/11-websockets-fundamentals.md`](docs/learnings/11-websockets-fundamentals.md).
 
-### Upcoming
+### Phase 10 — gRPC Fundamentals
 
-Future experiments include gRPC and service-to-service networking.
+Status: Complete
+
+Implemented and explored:
+
+- Protocol Buffers service definitions and Go code generation
+- Unary RPCs, request validation, and structured gRPC status errors
+- Deadlines, context cancellation, and context propagation
+- gRPC metadata and correlation IDs
+- Unary server interceptors for logging, tracing, and authentication
+- Interceptor chaining and execution-order testing
+- Server-streaming RPCs and client-side stream consumption
+- Client-streaming RPCs with aggregated responses
+- Bidirectional streaming and coordinated cancellation
+- Stream interceptors for logging and tracing
+- Stream send/receive error handling and cancellation behavior
+- HTTP/2 flow control versus application-level backpressure
+- Automated tests using `bufconn` and focused fake-stream tests
+- Coverage analysis, race detection, and static analysis with `go vet`
+
+Key lessons:
+
+- Deadlines and cancellation are cooperative; handlers and downstream operations must respond to context cancellation.
+- Unary and streaming RPCs require different interceptor types.
+- `io.EOF` indicates normal completion of a receive stream; other errors must be handled according to the RPC contract.
+- Transport flow control does not replace application-level resource limits and backpressure.
+- Meaningful tests should verify behavior and error handling rather than chase 100% statement coverage.
+
+Detailed notes: [`docs/learnings/12-grpc-fundamentals.md`](docs/learnings/12-grpc-fundamentals.md)
+
+Run the tests and quality checks:
+
+```bash
+go test ./grpc/fundamentals/... -count=1
+go test -race ./grpc/fundamentals/... -count=1
+go vet ./grpc/fundamentals/...
+```
+
+Scope note: This is a gRPC learning lab, not a production-ready inventory service. Production-grade authentication, persistent storage, graceful shutdown, and observability are outside the scope of this project.
+
+## Project Scope
+
+This repository focuses on learning and experimenting with networking fundamentals in Go, from TCP and application protocols through HTTP, TLS, DNS, UDP, HTTP/2, WebSockets, and gRPC.
+
+The core learning phases are complete. Remaining work is limited to final repository validation, documentation consistency, and project closure.
+
+Advanced service-to-service architecture, service discovery, distributed retries, persistent storage, and broader distributed-systems design are outside the scope of this repository.
 
 ## Running the HTTP/2 Experiments
 
@@ -308,6 +353,8 @@ or `tcp.port == 8080 && websocket` to focus on decoded WebSocket frames.
 
 ## Project Status
 
-🚧 In Development
+🚧 Final Review
 
-Current milestone: WebSocket Fundamentals — Phase 9 Complete
+Core networking learning phases 1–10 are complete.
+
+Current milestone: Repository validation and project closure.
