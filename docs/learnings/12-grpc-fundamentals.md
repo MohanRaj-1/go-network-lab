@@ -713,3 +713,118 @@ The post-handler logging still executes when the handler returns an error. For e
 - Interceptor order determines the order of pre-handler and post-handler operations.
 - Unit tests can verify nesting, while integration tests validate the registered chain.
 - Interceptors should preserve the handler's returned error unless intentionally applying a documented error transformation.
+
+## Day 13 — gRPC Testing and Quality
+
+### Testing Successful Responses and Error Paths
+
+I extended the existing gRPC tests to cover failures as well as successful responses. The RPC integration tests use `bufconn` to exercise the generated client, server registration, interceptors, and service handlers. Focused handler tests use fake streams to trigger specific errors directly.
+
+The additional cases cover:
+
+- An authorization value with an invalid prefix, such as `Basic abc123`, returns `Unauthenticated` without calling the next handler.
+- `SyncStock` returns receive and send failures immediately.
+- `ListStock` returns a send failure and handles a context cancelled before the first send.
+- `ReportStock` returns a receive failure without attempting to send a final report.
+
+These tests check observable behavior rather than just executing branches. For example, the cancelled-context test verifies both `codes.Canceled` and that `Send()` was never called.
+
+### Fake Streams and Interface Requirements
+
+Embedding `grpc.ServerStream` lets a fake satisfy the embedded portion of the generated streaming interface while implementing only the methods exercised by the test. It does not provide working implementations for calls delegated to a nil embedded interface.
+
+For example, `ListStock` calls `Context()` before `Send()`, so its fake needs an explicit context implementation:
+
+```go
+type failingListStockStream struct {
+    grpc.ServerStream
+    ctx        context.Context
+    sendErr    error
+    sendCalled bool
+}
+
+func (s *failingListStockStream) Context() context.Context {
+    return s.ctx
+}
+
+func (s *failingListStockStream) Send(item *inventorypb.StockItem) error {
+    s.sendCalled = true
+    return s.sendErr
+}
+```
+
+The test initializes `ctx` with `context.Background()` or an already-cancelled context. Header and trailer methods are not needed because this handler path does not call them.
+
+Generic interface signatures must match exactly. The bidirectional fake implements `Recv() (*inventorypb.StockItem, error)` and `Send(*inventorypb.StockItem) error`. The client-streaming fake instead implements `SendAndClose(*inventorypb.StockReportResponse) error`.
+
+I kept separate receive-error and send-error fakes. The send-error fake returns one valid item, then fails in `Send()`. A boolean tracks whether `Recv()` has already run, and an unexpected second receive panics. The receive-error fake also panics if `Send()` is unexpectedly called. This keeps each fake small and makes incorrect handler progression visible.
+
+### Verifying Error Propagation
+
+I use sentinel errors to distinguish an injected failure from an unrelated error:
+
+```go
+wantErr := errors.New("receive failed")
+stream := &failingReportStockStream{recvErr: wantErr}
+server := &inventoryServer{}
+
+err := server.ReportStock(stream)
+if !errors.Is(err, wantErr) {
+    t.Errorf("ReportStock() error = %v, want %v", err, wantErr)
+}
+```
+
+`errors.Is` checks whether the returned error matches the sentinel, including through compatible wrapping. It avoids relying on error-message text. It does not require exact error identity; tests that specifically require an unchanged error value can compare directly.
+
+For gRPC API behavior, I use `status.Code(err)` to check structured statuses such as `Unauthenticated` and `Canceled`.
+
+### Avoiding a Final Response After a Receive Failure
+
+`ReportStock` aggregates messages until `Recv()` returns `io.EOF`, then uses `SendAndClose()` to return the report. An unexpected receive error must return immediately rather than produce a report for an incomplete stream.
+
+`failingReportStockStream` records whether `SendAndClose()` was called. `TestReportStockRecvError` checks both the propagated sentinel error and that this flag remains false. Checking the error alone would miss an incorrect attempt to send a final response before returning it.
+
+These direct handler tests complement the RPC tests. They do not exercise transport behavior or interceptor registration, but they make failures deterministic without artificial sleeps or changes to production behavior.
+
+### Coverage Analysis
+
+I measured **90.1% statement coverage in the server package**. This means the tests executed 90.1% of the instrumented server statements; it does not mean that every behavior, scheduling order, or failure scenario is verified.
+
+The client and generated Protobuf packages showed 0.0% coverage in the package coverage run. The server percentage is not a repository-wide coverage figure.
+
+The coverage result stayed at 90.1% when I confirmed the targeted report receive-error test. Running a targeted test does not accumulate coverage into later runs; each coverage invocation measures the tests it executes, or reuses its own cached result. A focused assertion can add protection even when it does not increase statement coverage.
+
+I did not add fragile timing tests or unnecessary production hooks just to reach 100%. Reliable tests for meaningful behavior are more useful than a higher percentage that hides weak assertions.
+
+### Test Filtering and Cached Results
+
+In Windows Command Prompt, single quotes are passed literally. My initial single-quoted `-run` filter matched no tests, even though the command printed `PASS`. The accompanying `[no tests to run]` meant the target test had not executed.
+
+Using double quotes selected it correctly:
+
+```cmd
+go test ./grpc/fundamentals/server -run "^TestReportStockRecvError$" -v
+go test ./grpc/fundamentals/server -cover
+```
+
+I checked for the explicit `TestReportStockRecvError` run and pass entries. `(cached)` indicates that Go reused a successful test result; `-count=1` disables test-result caching when I want a fresh run.
+
+### Quality Checks and Validation
+
+I completed the final validation with fresh test runs:
+
+```bash
+go test -count=1 ./grpc/fundamentals/...
+go test -race -count=1 ./grpc/fundamentals/...
+go vet ./grpc/fundamentals/...
+```
+
+Both test runs passed, and vet reported no issues. The server statement coverage measurement was 90.1% from the separate coverage run.
+
+- `go test` checks the behavior expressed by test assertions.
+- The race detector checks for data races along executed paths; a passing run does not prove that every concurrency scenario is safe.
+- `go vet` performs static checks for suspicious code patterns; it complements tests rather than replacing them.
+
+### Key Learning
+
+Useful coverage comes from deliberately checking contracts: returning the correct error, stopping after a stream failure, avoiding an invalid final response, and rejecting credentials before business logic runs. Small fake streams make these paths easy to exercise, while integration tests retain coverage of actual RPC behavior.

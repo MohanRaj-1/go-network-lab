@@ -60,6 +60,34 @@ func TestAuthenticationUnaryInterceptorMissingMetadata(t *testing.T) {
 	}
 }
 
+func TestAuthenticationUnaryInterceptorInvalidAuthorizationFormat(t *testing.T) {
+	ctx := metadata.NewIncomingContext(
+		context.Background(),
+		metadata.Pairs("authorization", "Basic abc123"),
+	)
+	handlerCalled := false
+
+	_, err := authenticationUnaryInterceptor(
+		ctx,
+		"request",
+		&grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"},
+		func(ctx context.Context, req any) (any, error) {
+			handlerCalled = true
+			return "response", nil
+		},
+	)
+
+	if err == nil {
+		t.Fatal("interceptor error = nil, want an authentication error")
+	}
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("status = %v, want Unauthenticated", status.Code(err))
+	}
+	if handlerCalled {
+		t.Fatal("handler must not be called with an invalid authorization format")
+	}
+}
+
 func TestAuthenticationUnaryInterceptorInvalidToken(t *testing.T) {
 	ctx := metadata.NewIncomingContext(
 		context.Background(),

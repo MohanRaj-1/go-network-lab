@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -17,6 +18,130 @@ import (
 )
 
 const bufSize = 1024 * 1024
+
+type failingListStockStream struct {
+	grpc.ServerStream
+	ctx        context.Context
+	sendErr    error
+	sendCalled bool
+}
+
+func (s *failingListStockStream) Context() context.Context {
+	return s.ctx
+}
+
+func (s *failingListStockStream) Send(item *inventorypb.StockItem) error {
+	s.sendCalled = true
+	return s.sendErr
+}
+
+func TestListStockContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	server := &inventoryServer{}
+	stream := &failingListStockStream{ctx: ctx}
+
+	err := server.ListStock(&inventorypb.StockListRequest{}, stream)
+	if got := status.Code(err); got != codes.Canceled {
+		t.Errorf("ListStock() error code = %s, want %s (error: %v)", got, codes.Canceled, err)
+	}
+	if stream.sendCalled {
+		t.Fatal("Send() was called with an already-canceled context")
+	}
+}
+
+func TestListStockSendError(t *testing.T) {
+	wantErr := errors.New("send failed")
+	server := &inventoryServer{}
+	stream := &failingListStockStream{
+		ctx:     context.Background(),
+		sendErr: wantErr,
+	}
+
+	if err := server.ListStock(&inventorypb.StockListRequest{}, stream); !errors.Is(err, wantErr) {
+		t.Fatalf("ListStock() error = %v, want %v", err, wantErr)
+	}
+}
+
+type failingReportStockStream struct {
+	grpc.ServerStream
+	recvErr            error
+	sendAndCloseCalled bool
+}
+
+func (s *failingReportStockStream) Recv() (*inventorypb.StockItem, error) {
+	return nil, s.recvErr
+}
+
+func (s *failingReportStockStream) SendAndClose(report *inventorypb.StockReportResponse) error {
+	s.sendAndCloseCalled = true
+	return nil
+}
+
+func TestReportStockRecvError(t *testing.T) {
+	wantErr := errors.New("receive failed")
+	stream := &failingReportStockStream{recvErr: wantErr}
+	server := &inventoryServer{}
+
+	if err := server.ReportStock(stream); !errors.Is(err, wantErr) {
+		t.Errorf("ReportStock() error = %v, want %v", err, wantErr)
+	}
+	if stream.sendAndCloseCalled {
+		t.Fatal("SendAndClose() was called after a receive error")
+	}
+}
+
+type failingRecvStream struct {
+	grpc.ServerStream
+	recvErr error
+}
+
+func (s *failingRecvStream) Recv() (*inventorypb.StockItem, error) {
+	return nil, s.recvErr
+}
+
+func (s *failingRecvStream) Send(item *inventorypb.StockItem) error {
+	panic("unexpected Send call after receive error")
+}
+
+type failingSendStream struct {
+	grpc.ServerStream
+	sendErr  error
+	received bool
+}
+
+func (s *failingSendStream) Recv() (*inventorypb.StockItem, error) {
+	if s.received {
+		panic("unexpected Recv call after send error")
+	}
+	s.received = true
+	return &inventorypb.StockItem{ProductId: "keyboard", Available: true}, nil
+}
+
+func (s *failingSendStream) Send(item *inventorypb.StockItem) error {
+	return s.sendErr
+}
+
+func TestSyncStockSendError(t *testing.T) {
+	wantErr := errors.New("send failed")
+	server := &inventoryServer{}
+	stream := &failingSendStream{sendErr: wantErr}
+
+	if err := server.SyncStock(stream); !errors.Is(err, wantErr) {
+		t.Fatalf("SyncStock() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestSyncStockRecvError(t *testing.T) {
+	wantErr := errors.New("receive failed")
+	server := &inventoryServer{}
+	stream := &failingRecvStream{recvErr: wantErr}
+
+	if err := server.SyncStock(stream); !errors.Is(err, wantErr) {
+		t.Fatalf("SyncStock() error = %v, want %v", err, wantErr)
+	}
+}
 
 func TestSyncStockCancellation(t *testing.T) {
 	syncStockItemReceived := make(chan struct{}, 1)
